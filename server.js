@@ -10,6 +10,7 @@ import dotenv from "dotenv";
 
 // src/db.ts
 import Database from "better-sqlite3";
+import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from "fs";
@@ -21,6 +22,71 @@ try {
   }
 } catch (e) {
   console.warn("Warning creating db directory:", e);
+}
+var isMariaDBConfigured = Boolean(
+  (process.env.DB_TYPE === "mariadb" || process.env.DB_HOST) && process.env.DB_USER && process.env.DB_NAME
+);
+var mariadbPool = null;
+if (isMariaDBConfigured) {
+  try {
+    mariadbPool = mysql.createPool({
+      host: process.env.DB_HOST || "127.0.0.1",
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD || "",
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      charset: "utf8mb4"
+    });
+    console.log(`\u{1F50C} [MARIADB] Pool terkonfigurasi untuk ${process.env.DB_USER}@${process.env.DB_HOST}:${process.env.DB_PORT || 3306}/${process.env.DB_NAME}`);
+  } catch (err) {
+    console.warn("\u26A0\uFE0F [MARIADB] Gagal menginisialisasi koneksi pool MariaDB, fallback ke SQLite:", err);
+  }
+}
+async function testMariaDBConnection(customConfig) {
+  const host = customConfig?.host || process.env.DB_HOST || "127.0.0.1";
+  const port = customConfig?.port || (process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306);
+  const user = customConfig?.user || process.env.DB_USER || "";
+  const password = customConfig?.password !== void 0 ? customConfig.password : process.env.DB_PASSWORD || "";
+  const database = customConfig?.database || process.env.DB_NAME || "";
+  if (!user || !database) {
+    return {
+      success: false,
+      message: "Parameter DB_USER dan DB_NAME harus diisi untuk pengujian koneksi MariaDB."
+    };
+  }
+  let testConn = null;
+  try {
+    testConn = await mysql.createConnection({
+      host,
+      port,
+      user,
+      password,
+      database,
+      connectTimeout: 5e3
+    });
+    const [rows] = await testConn.query("SELECT VERSION() as version, DATABASE() as current_db");
+    const result = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    await testConn.end();
+    return {
+      success: true,
+      message: `Berhasil terhubung ke MariaDB di ${host}:${port} (Database: ${result?.current_db || database})`,
+      version: result?.version || "Unknown"
+    };
+  } catch (error) {
+    if (testConn) {
+      try {
+        await testConn.end();
+      } catch {
+      }
+    }
+    return {
+      success: false,
+      message: `Gagal terhubung ke MariaDB: ${error.message || error.code || "Connection error"}`
+    };
+  }
 }
 var activeDb = new Database(dbPath);
 activeDb.pragma("journal_mode = WAL");
@@ -1328,13 +1394,16 @@ async function startServer() {
           db_writable: dbWritable,
           port: PORT,
           node_version: process.version,
-          platform: process.platform
+          platform: process.platform,
+          db_engine: isMariaDBConfigured ? "mariadb" : "sqlite",
+          mariadb_configured: isMariaDBConfigured
         },
         db_info: {
           tables_count: tablesCount,
           user_count: userCount,
           superadmin_count: superadminCount,
-          is_empty: tablesCount === 0 || userCount === 0
+          is_empty: tablesCount === 0 || userCount === 0,
+          db_engine: isMariaDBConfigured ? "mariadb" : "sqlite"
         }
       });
     } catch (e) {
@@ -3407,6 +3476,58 @@ async function startServer() {
     }
     logAudit(user, "Pengaturan", "OPTIMIZE_DATABASE", "mediaflow.db", `Super Admin ${user.nama} menjalankan optimasi VACUUM pada penyimpanan SQLite`);
     res.json({ success: true, db_size_mb: (dbSize / (1024 * 1024)).toFixed(2) });
+  });
+  app.get("/api/database/status", (_req, res) => {
+    const configured = isMariaDBConfigured;
+    const dbType = process.env.DB_TYPE || (configured ? "mariadb" : "sqlite");
+    res.json({
+      active_engine: configured ? "mariadb" : "sqlite",
+      configured_engine: dbType,
+      is_mariadb_configured: configured,
+      host: configured ? process.env.DB_HOST || "127.0.0.1" : void 0,
+      port: configured ? process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306 : void 0,
+      database: configured ? process.env.DB_NAME : "mediaflow.db",
+      user: configured ? process.env.DB_USER : void 0,
+      sqlite_fallback: !configured
+    });
+  });
+  app.post("/api/database/test-mariadb", authenticateJWT, async (req, res) => {
+    const user = req.user;
+    if (user.role_id !== 1 && user.role_kode !== "super_admin" && user.role_kode !== "superadmin") {
+      res.status(403).json({ error: "Hanya Super Admin yang dapat menguji koneksi database." });
+      return;
+    }
+    const { host, port, user: dbUser, password, database } = req.body || {};
+    const result = await testMariaDBConnection({
+      host,
+      port: port ? Number(port) : void 0,
+      user: dbUser,
+      password,
+      database
+    });
+    logAudit(
+      user,
+      "Pengaturan",
+      "TEST_MARIADB_CONNECTION",
+      database || process.env.DB_NAME || "mariadb",
+      `Super Admin ${user.nama} menguji koneksi MariaDB (${result.success ? "BERHASIL" : "GAGAL"}): ${result.message}`
+    );
+    res.json(result);
+  });
+  app.get("/api/database/schema-mariadb", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_id !== 1 && user.role_kode !== "super_admin" && user.role_kode !== "superadmin") {
+      res.status(403).json({ error: "Hanya Super Admin yang dapat mengunduh skema MariaDB." });
+      return;
+    }
+    const schemaPath = path2.join(process.cwd(), "schema-mariadb.sql");
+    if (!fs2.existsSync(schemaPath)) {
+      res.status(404).json({ error: "Berkas schema-mariadb.sql tidak ditemukan." });
+      return;
+    }
+    res.setHeader("Content-Type", "application/sql");
+    res.setHeader("Content-Disposition", 'attachment; filename="schema-mariadb.sql"');
+    res.sendFile(schemaPath);
   });
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

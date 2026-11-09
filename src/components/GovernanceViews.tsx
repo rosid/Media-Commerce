@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   Cpu,
+  Database,
   Download,
   ExternalLink,
   Eye,
@@ -1737,6 +1738,75 @@ export const SettingsModule: React.FC<{
     }
   };
 
+  const [dbStatus, setDbStatus] = useState<{
+    active_engine?: string;
+    is_mariadb_configured?: boolean;
+    host?: string;
+    port?: number;
+    database?: string;
+    user?: string;
+    sqlite_fallback?: boolean;
+  }>({});
+  const [isDownloadingMariaDBSchema, setIsDownloadingMariaDBSchema] = useState(false);
+  const [isTestingMariaDB, setIsTestingMariaDB] = useState(false);
+  const [mariaDBTestResult, setMariaDBTestResult] = useState<{ success: boolean; message: string; version?: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/database/status')
+      .then((res) => res.json())
+      .then((data) => setDbStatus(data))
+      .catch(() => {});
+  }, []);
+
+  const handleDownloadMariaDBSchema = async () => {
+    setIsDownloadingMariaDBSchema(true);
+    try {
+      const token = localStorage.getItem('mediaflow_jwt');
+      const res = await fetch('/api/database/schema-mariadb', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Gagal mengunduh berkas skema MariaDB.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'schema-mariadb.sql';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      if (showToast) showToast('Berkas schema-mariadb.sql berhasil diunduh.');
+    } catch (err: any) {
+      if (showToast) showToast(err.message || 'Gagal mengunduh skema MariaDB.');
+    } finally {
+      setIsDownloadingMariaDBSchema(false);
+    }
+  };
+
+  const handleTestMariaDBConnection = async () => {
+    setIsTestingMariaDB(true);
+    setMariaDBTestResult(null);
+    try {
+      const token = localStorage.getItem('mediaflow_jwt');
+      const res = await fetch('/api/database/test-mariadb', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      setMariaDBTestResult(data);
+      if (showToast) showToast(data.message);
+    } catch (err: any) {
+      const fail = { success: false, message: err.message || 'Gagal menghubungi endpoint uji database' };
+      setMariaDBTestResult(fail);
+      if (showToast) showToast(fail.message);
+    } finally {
+      setIsTestingMariaDB(false);
+    }
+  };
+
   const handleSelectRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -3368,6 +3438,91 @@ export const SettingsModule: React.FC<{
                   <p className="text-[11px] text-slate-500 mt-1">
                     Pesan ini akan langsung muncul pada layar halaman login ketika mode pemeliharaan diaktifkan.
                   </p>
+                </div>
+              </div>
+
+              {/* Database Actions: MariaDB / MySQL Production Engine */}
+              <div className="bg-white border border-slate-200 rounded-lg p-6 space-y-5">
+                <div className="pb-3 border-b border-slate-200 font-bold text-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <Database className="w-4 h-4 text-emerald-600" />
+                    Integrasi & Migrasi Database MariaDB / MySQL (VPS Production)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {dbStatus.is_mariadb_configured ? (
+                      <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        MariaDB Aktif ({dbStatus.host || '127.0.0.1'})
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+                        <Info className="w-3 h-3 text-amber-600" />
+                        SQLite Aktif (Mode Fallback / Pengujian)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+                  <p className="text-xs text-slate-700 leading-relaxed">
+                    Aplikasi ini mendukung arsitektur hybrid MariaDB &amp; SQLite. Untuk lingkungan produksi di VPS (xCloud), disarankan menghubungkan MariaDB lokal agar proses PM2 dapat berjalan dalam multi-worker tanpa risiko lock.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleDownloadMariaDBSchema}
+                      disabled={isDownloadingMariaDBSchema}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer text-xs transition-colors shadow-xs"
+                    >
+                      <Download className={`w-3.5 h-3.5 ${isDownloadingMariaDBSchema ? 'animate-bounce' : ''}`} />
+                      {isDownloadingMariaDBSchema ? 'Mengunduh...' : 'Unduh schema-mariadb.sql'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTestMariaDBConnection}
+                      disabled={isTestingMariaDB}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer text-xs transition-colors shadow-xs"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isTestingMariaDB ? 'animate-spin' : ''}`} />
+                      {isTestingMariaDB ? 'Menguji Koneksi...' : 'Uji Koneksi MariaDB'}
+                    </button>
+                  </div>
+
+                  {mariaDBTestResult && (
+                    <div
+                      className={`p-3 rounded-lg border text-xs flex items-start gap-2 ${
+                        mariaDBTestResult.success
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-900'
+                      }`}
+                    >
+                      {mariaDBTestResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      )}
+                      <div>
+                        <div className="font-bold">{mariaDBTestResult.message}</div>
+                        {mariaDBTestResult.version && (
+                          <div className="text-[11px] text-slate-600 mt-0.5 font-mono">
+                            Versi Server: {mariaDBTestResult.version}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 p-3 bg-white border border-slate-200 rounded-md text-[11px] text-slate-600 space-y-1.5">
+                    <div className="font-semibold text-slate-800">Langkah Migrasi ke MariaDB di VPS (xCloud):</div>
+                    <ol className="list-decimal list-inside space-y-1 text-slate-600">
+                      <li>Buka phpMyAdmin di VPS dan buat database baru (contoh: <code>pos_digdayamedi_db</code>).</li>
+                      <li>Impor berkas <code>schema-mariadb.sql</code> melalui menu <strong>Import</strong> di phpMyAdmin.</li>
+                      <li>Di VPS Anda, tambahkan kredensial di <code>.env</code>: <code>DB_TYPE="mariadb"</code>, <code>DB_HOST="127.0.0.1"</code>, <code>DB_USER="..."</code>, <code>DB_PASSWORD="..."</code>, <code>DB_NAME="..."</code>.</li>
+                      <li>Lakukan redeploy atau restart server di xCloud.</li>
+                    </ol>
+                  </div>
                 </div>
               </div>
 

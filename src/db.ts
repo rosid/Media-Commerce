@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import path from 'path';
 import fs from 'fs';
@@ -14,6 +15,90 @@ try {
   console.warn('Warning creating db directory:', e);
 }
 
+// ==============================================================================
+// MARIADB / MYSQL POOL INTEGRATION
+// ==============================================================================
+export const isMariaDBConfigured = Boolean(
+  (process.env.DB_TYPE === 'mariadb' || process.env.DB_HOST) &&
+  process.env.DB_USER &&
+  process.env.DB_NAME
+);
+
+export let mariadbPool: mysql.Pool | null = null;
+
+if (isMariaDBConfigured) {
+  try {
+    mariadbPool = mysql.createPool({
+      host: process.env.DB_HOST || '127.0.0.1',
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      charset: 'utf8mb4',
+    });
+    console.log(`🔌 [MARIADB] Pool terkonfigurasi untuk ${process.env.DB_USER}@${process.env.DB_HOST}:${process.env.DB_PORT || 3306}/${process.env.DB_NAME}`);
+  } catch (err) {
+    console.warn('⚠️ [MARIADB] Gagal menginisialisasi koneksi pool MariaDB, fallback ke SQLite:', err);
+  }
+}
+
+export async function testMariaDBConnection(customConfig?: {
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}): Promise<{ success: boolean; message: string; version?: string }> {
+  const host = customConfig?.host || process.env.DB_HOST || '127.0.0.1';
+  const port = customConfig?.port || (process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306);
+  const user = customConfig?.user || process.env.DB_USER || '';
+  const password = customConfig?.password !== undefined ? customConfig.password : (process.env.DB_PASSWORD || '');
+  const database = customConfig?.database || process.env.DB_NAME || '';
+
+  if (!user || !database) {
+    return {
+      success: false,
+      message: 'Parameter DB_USER dan DB_NAME harus diisi untuk pengujian koneksi MariaDB.',
+    };
+  }
+
+  let testConn: mysql.Connection | null = null;
+  try {
+    testConn = await mysql.createConnection({
+      host,
+      port,
+      user,
+      password,
+      database,
+      connectTimeout: 5000,
+    });
+    const [rows] = await testConn.query('SELECT VERSION() as version, DATABASE() as current_db');
+    const result = Array.isArray(rows) && rows[0] ? (rows[0] as any) : null;
+    await testConn.end();
+    return {
+      success: true,
+      message: `Berhasil terhubung ke MariaDB di ${host}:${port} (Database: ${result?.current_db || database})`,
+      version: result?.version || 'Unknown',
+    };
+  } catch (error: any) {
+    if (testConn) {
+      try {
+        await testConn.end();
+      } catch {}
+    }
+    return {
+      success: false,
+      message: `Gagal terhubung ke MariaDB: ${error.message || error.code || 'Connection error'}`,
+    };
+  }
+}
+
+// ==============================================================================
+// SQLITE FALLBACK & LOCAL DEVELOPMENT ENGINE
+// ==============================================================================
 let activeDb = new Database(dbPath);
 activeDb.pragma('journal_mode = WAL');
 activeDb.pragma('foreign_keys = ON');

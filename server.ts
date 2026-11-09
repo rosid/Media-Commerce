@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile } from './src/db.ts';
+import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile, isMariaDBConfigured, testMariaDBConnection, mariadbPool } from './src/db.ts';
 
 dotenv.config();
 
@@ -397,12 +397,15 @@ async function startServer() {
           port: PORT,
           node_version: process.version,
           platform: process.platform,
+          db_engine: isMariaDBConfigured ? 'mariadb' : 'sqlite',
+          mariadb_configured: isMariaDBConfigured,
         },
         db_info: {
           tables_count: tablesCount,
           user_count: userCount,
           superadmin_count: superadminCount,
           is_empty: tablesCount === 0 || userCount === 0,
+          db_engine: isMariaDBConfigured ? 'mariadb' : 'sqlite',
         },
       });
     } catch (e: any) {
@@ -2955,6 +2958,69 @@ async function startServer() {
 
     logAudit(user, 'Pengaturan', 'OPTIMIZE_DATABASE', 'mediaflow.db', `Super Admin ${user.nama} menjalankan optimasi VACUUM pada penyimpanan SQLite`);
     res.json({ success: true, db_size_mb: (dbSize / (1024 * 1024)).toFixed(2) });
+  });
+
+  // ============================================================================
+  // MARIADB / MYSQL ENGINE STATUS & TESTING
+  // ============================================================================
+  app.get('/api/database/status', (_req: Request, res: Response) => {
+    const configured = isMariaDBConfigured;
+    const dbType = process.env.DB_TYPE || (configured ? 'mariadb' : 'sqlite');
+    res.json({
+      active_engine: configured ? 'mariadb' : 'sqlite',
+      configured_engine: dbType,
+      is_mariadb_configured: configured,
+      host: configured ? process.env.DB_HOST || '127.0.0.1' : undefined,
+      port: configured ? (process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306) : undefined,
+      database: configured ? process.env.DB_NAME : 'mediaflow.db',
+      user: configured ? process.env.DB_USER : undefined,
+      sqlite_fallback: !configured,
+    });
+  });
+
+  app.post('/api/database/test-mariadb', authenticateJWT, async (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang dapat menguji koneksi database.' });
+      return;
+    }
+
+    const { host, port, user: dbUser, password, database } = req.body || {};
+    const result = await testMariaDBConnection({
+      host,
+      port: port ? Number(port) : undefined,
+      user: dbUser,
+      password,
+      database,
+    });
+
+    logAudit(
+      user,
+      'Pengaturan',
+      'TEST_MARIADB_CONNECTION',
+      database || process.env.DB_NAME || 'mariadb',
+      `Super Admin ${user.nama} menguji koneksi MariaDB (${result.success ? 'BERHASIL' : 'GAGAL'}): ${result.message}`
+    );
+
+    res.json(result);
+  });
+
+  app.get('/api/database/schema-mariadb', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang dapat mengunduh skema MariaDB.' });
+      return;
+    }
+
+    const schemaPath = path.join(process.cwd(), 'schema-mariadb.sql');
+    if (!fs.existsSync(schemaPath)) {
+      res.status(404).json({ error: 'Berkas schema-mariadb.sql tidak ditemukan.' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', 'attachment; filename="schema-mariadb.sql"');
+    res.sendFile(schemaPath);
   });
 
   // ============================================================================
