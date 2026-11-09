@@ -25,6 +25,8 @@ try {
 var activeDb = new Database(dbPath);
 activeDb.pragma("journal_mode = WAL");
 activeDb.pragma("foreign_keys = ON");
+activeDb.pragma("busy_timeout = 5000");
+activeDb.pragma("synchronous = NORMAL");
 var db = new Proxy({}, {
   get(_target, prop) {
     const val = activeDb[prop];
@@ -84,11 +86,15 @@ function restoreDatabaseFromFile(buffer) {
     activeDb = new Database(dbPath);
     activeDb.pragma("journal_mode = WAL");
     activeDb.pragma("foreign_keys = ON");
+    activeDb.pragma("busy_timeout = 5000");
+    activeDb.pragma("synchronous = NORMAL");
     throw new Error(`Gagal menyalin file database: ${copyErr.message}`);
   }
   activeDb = new Database(dbPath);
   activeDb.pragma("journal_mode = WAL");
   activeDb.pragma("foreign_keys = ON");
+  activeDb.pragma("busy_timeout = 5000");
+  activeDb.pragma("synchronous = NORMAL");
   return {
     success: true,
     backupFile,

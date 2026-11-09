@@ -17,6 +17,8 @@ try {
 let activeDb = new Database(dbPath);
 activeDb.pragma('journal_mode = WAL');
 activeDb.pragma('foreign_keys = ON');
+activeDb.pragma('busy_timeout = 5000');
+activeDb.pragma('synchronous = NORMAL');
 
 export const db: Database.Database = new Proxy({} as any, {
   get(_target, prop) {
@@ -81,12 +83,16 @@ export function restoreDatabaseFromFile(buffer: Buffer): { success: boolean; bac
     activeDb = new Database(dbPath);
     activeDb.pragma('journal_mode = WAL');
     activeDb.pragma('foreign_keys = ON');
+    activeDb.pragma('busy_timeout = 5000');
+    activeDb.pragma('synchronous = NORMAL');
     throw new Error(`Gagal menyalin file database: ${copyErr.message}`);
   }
 
   activeDb = new Database(dbPath);
   activeDb.pragma('journal_mode = WAL');
   activeDb.pragma('foreign_keys = ON');
+  activeDb.pragma('busy_timeout = 5000');
+  activeDb.pragma('synchronous = NORMAL');
 
   return {
     success: true,
