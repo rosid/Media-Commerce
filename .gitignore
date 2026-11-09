@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# SQLite Database & Journal Files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+mediaflow.db

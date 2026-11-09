@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F8FAFC;
+    color: #0F172A;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  html.dark body {
+    background-color: #0B0F19;
+    color: #F8FAFC;
+  }
+
+  .font-mono,
+  .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ============================================================================
+   COMPREHENSIVE ENTERPRISE DARK MODE OVERRIDES (Excludes A4 Print Sheet)
+   ============================================================================ */
+html.dark .app-shell-canvas {
+  background-color: #0B0F19 !important;
+  color: #F8FAFC !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-white {
+  background-color: #111827 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-slate-50,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-slate-50\/80,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-slate-50\/70 {
+  background-color: #1E293B !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-slate-100 {
+  background-color: #1F2937 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).hover\:bg-slate-50:hover,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).hover\:bg-slate-50\/80:hover,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).hover\:bg-slate-50\/70:hover,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).hover\:bg-slate-100:hover,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).hover\:bg-slate-200:hover {
+  background-color: #334155 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-blue-50,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-blue-50\/30,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-blue-50\/40,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-blue-50\/20 {
+  background-color: rgba(37, 99, 235, 0.14) !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-emerald-50 {
+  background-color: rgba(5, 150, 105, 0.14) !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-amber-50,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-amber-50\/50 {
+  background-color: rgba(217, 119, 6, 0.15) !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).bg-red-50 {
+  background-color: rgba(220, 38, 38, 0.15) !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-slate-900 {
+  color: #F8FAFC !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-slate-800 {
+  color: #E2E8F0 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-slate-700 {
+  color: #CBD5E1 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-slate-600 {
+  color: #94A3B8 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-slate-500 {
+  color: #94A3B8 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-blue-700 {
+  color: #60A5FA !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-emerald-700 {
+  color: #34D399 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-amber-700,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-amber-900 {
+  color: #FBBF24 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-red-700,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).text-red-900 {
+  color: #F87171 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).border-slate-200,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).border-slate-300,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).border-slate-100 {
+  border-color: #1E293B !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).divide-slate-200 > :not([hidden]) ~ :not([hidden]),
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *).divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1E293B !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) input:not([type="checkbox"]):not([type="radio"]),
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) select,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) textarea {
+  background-color: #0F172A !important;
+  color: #F8FAFC !important;
+  border-color: #334155 !important;
+}
+
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) input::placeholder,
+html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) textarea::placeholder {
+  color: #64748B !important;
+}
+
+/* Ensure A4 Landscape Print Sheet stays crisp paper white even in Dark Mode */
+.a4-landscape-sheet {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  body {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .a4-landscape-sheet {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  .signature-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

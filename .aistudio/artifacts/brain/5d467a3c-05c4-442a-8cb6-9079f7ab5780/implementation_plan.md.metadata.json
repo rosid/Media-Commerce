@@ -1,0 +1,6 @@
+{
+  "summary":  "Rencana implementasi lengkap untuk Sistem Manajemen Iklan & Media Digital (Quotation -> Deal -> Media Order -> Bukti Tayang -> Invoice) berbasis VPS dengan SQLite, autentikasi JWT, RBAC 7 Role, Audit Log mendalam, Dashboard interaktif, serta cetak dokumen A4 Landscape.",
+  "updatedAt":  "2026-11-09T03:51:17.958924369Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
