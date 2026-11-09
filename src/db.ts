@@ -5,6 +5,15 @@ import fs from 'fs';
 
 export const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'mediaflow.db');
 
+try {
+  const dbDir = path.dirname(path.resolve(dbPath));
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Warning creating db directory:', e);
+}
+
 let activeDb = new Database(dbPath);
 activeDb.pragma('journal_mode = WAL');
 activeDb.pragma('foreign_keys = ON');

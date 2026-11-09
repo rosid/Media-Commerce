@@ -11,6 +11,15 @@ import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFi
 
 dotenv.config();
 
+// Tangani uncaught exceptions dan unhandled rejections agar tidak crash tanpa log
+process.on('uncaughtException', (err) => {
+  console.error('❌ [CRITICAL UNCAUGHT EXCEPTION]:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [CRITICAL UNHANDLED REJECTION]:', reason);
+});
+
 const JWT_SECRET: string =
   process.env.JWT_SECRET ||
   (process.env.NODE_ENV === 'production'
@@ -2959,16 +2968,55 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    } else {
+      console.warn(`⚠️ [PRODUCTION NOTICE] Folder dist/ tidak ditemukan di ${distPath}. Pastikan telah menjalankan 'npm run build'.`);
+      app.get('*', (_req, res) => {
+        res.status(503).send(`
+          <!DOCTYPE html>
+          <html>
+            <head><title>MediaFlow ERP - Menyiapkan Sistem</title></head>
+            <body style="font-family: system-ui, sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #f8fafc;">
+              <h2 style="color: #38bdf8;">MediaFlow ERP Backend Aktif</h2>
+              <p style="color: #94a3b8;">Frontend sedang dipersiapkan. Harap pastikan perintah build telah dijalankan (<code>npm run build</code>).</p>
+            </body>
+          </html>
+        `);
+      });
+    }
   }
 
   const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MediaFlow ERP Server listening on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 MediaFlow ERP Server listening on http://0.0.0.0:${PORT} [NODE_ENV=${process.env.NODE_ENV || 'development'}]`);
   });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`❌ [PORT ERROR] Port ${PORT} sedang digunakan oleh proses lain. Periksa proses PM2 atau sesuaikan PORT di .env.`);
+    } else {
+      console.error('❌ [SERVER ERROR]:', err);
+    }
+  });
+
+  const gracefulShutdown = () => {
+    console.log('🛑 Menerima sinyal terminasi, mematikan server MediaFlow ERP dengan aman...');
+    server.close(() => {
+      console.log('✅ Server HTTP ditutup.');
+      try {
+        db.close();
+        console.log('✅ Koneksi SQLite ditutup.');
+      } catch {}
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
 }
 
 startServer();
