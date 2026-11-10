@@ -10,7 +10,6 @@ import dotenv from "dotenv";
 
 // src/db.ts
 import Database from "better-sqlite3";
-import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from "fs";
@@ -26,10 +25,21 @@ try {
 var isMariaDBConfigured = Boolean(
   (process.env.DB_TYPE === "mariadb" || process.env.DB_HOST) && process.env.DB_USER && process.env.DB_NAME
 );
+var mysqlModule = null;
+var mysqlLoadError = null;
+try {
+  const mod = await import("mysql2/promise");
+  mysqlModule = mod.default || mod;
+} catch (err) {
+  mysqlLoadError = err?.message || "Module mysql2 not found";
+  if (isMariaDBConfigured) {
+    console.warn("\u26A0\uFE0F [DATABASE NOTICE] Paket mysql2 belum terpasang di node_modules VPS. Menggunakan SQLite sebagai fallback sementara:", mysqlLoadError);
+  }
+}
 var mariadbPool = null;
-if (isMariaDBConfigured) {
+if (isMariaDBConfigured && mysqlModule) {
   try {
-    mariadbPool = mysql.createPool({
+    mariadbPool = mysqlModule.createPool({
       host: process.env.DB_HOST || "127.0.0.1",
       port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
       user: process.env.DB_USER,
@@ -57,9 +67,20 @@ async function testMariaDBConnection(customConfig) {
       message: "Parameter DB_USER dan DB_NAME harus diisi untuk pengujian koneksi MariaDB."
     };
   }
+  if (!mysqlModule) {
+    try {
+      const mod = await import("mysql2/promise");
+      mysqlModule = mod.default || mod;
+    } catch {
+      return {
+        success: false,
+        message: "Paket driver 'mysql2' belum terpasang di folder node_modules VPS. Silakan jalankan perintah 'npm install' di folder proyek VPS Anda."
+      };
+    }
+  }
   let testConn = null;
   try {
-    testConn = await mysql.createConnection({
+    const conn = await mysqlModule.createConnection({
       host,
       port,
       user,
@@ -67,9 +88,10 @@ async function testMariaDBConnection(customConfig) {
       database,
       connectTimeout: 5e3
     });
-    const [rows] = await testConn.query("SELECT VERSION() as version, DATABASE() as current_db");
+    testConn = conn;
+    const [rows] = await conn.query("SELECT VERSION() as version, DATABASE() as current_db");
     const result = Array.isArray(rows) && rows[0] ? rows[0] : null;
-    await testConn.end();
+    await conn.end();
     return {
       success: true,
       message: `Berhasil terhubung ke MariaDB di ${host}:${port} (Database: ${result?.current_db || database})`,
