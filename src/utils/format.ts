@@ -135,7 +135,7 @@ export interface PdfSignatorySlot {
   tampilkan_stempel: boolean;
 }
 
-export type PdfDocKey = 'QUOTATION' | 'MEDIA_ORDER' | 'INVOICE' | 'PROOF' | 'DEAL_PROGRESS';
+export type PdfDocKey = 'QUOTATION' | 'MEDIA_ORDER' | 'INVOICE' | 'PROOF' | 'DEAL_PROGRESS' | 'RECEIPT';
 
 export type PdfSignatureMap = Record<PdfDocKey, PdfSignatorySlot[]>;
 
@@ -251,6 +251,17 @@ export const DEFAULT_PDF_SIGNATURES: PdfSignatureMap = {
       tampilkan_stempel: true,
     },
   ],
+  RECEIPT: [
+    {
+      id: 'kwt-1',
+      label_atas: 'Diterima Oleh (Finance / Kasir),',
+      mode_penandatangan: 'pembuat',
+      nama: 'Siti Rahmawati',
+      jabatan: 'Billing & Finance Officer',
+      tampilkan_ttd_digital: true,
+      tampilkan_stempel: true,
+    },
+  ],
 };
 
 export function parsePdfSignaturesConfig(rawJson?: string | null): PdfSignatureMap {
@@ -263,6 +274,7 @@ export function parsePdfSignaturesConfig(rawJson?: string | null): PdfSignatureM
       INVOICE: Array.isArray(parsed.INVOICE) && parsed.INVOICE.length > 0 ? parsed.INVOICE : DEFAULT_PDF_SIGNATURES.INVOICE,
       PROOF: Array.isArray(parsed.PROOF) && parsed.PROOF.length > 0 ? parsed.PROOF : DEFAULT_PDF_SIGNATURES.PROOF,
       DEAL_PROGRESS: Array.isArray(parsed.DEAL_PROGRESS) && parsed.DEAL_PROGRESS.length > 0 ? parsed.DEAL_PROGRESS : DEFAULT_PDF_SIGNATURES.DEAL_PROGRESS,
+      RECEIPT: Array.isArray(parsed.RECEIPT) && parsed.RECEIPT.length > 0 ? parsed.RECEIPT : DEFAULT_PDF_SIGNATURES.RECEIPT,
     };
   } catch {
     return DEFAULT_PDF_SIGNATURES;

@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  ReceiptText,
   RefreshCw,
   Tag,
   Tags,
@@ -2918,6 +2919,7 @@ export const InvoicesModule: React.FC<{
 
   // Payment Modal State
   const [paymentTarget, setPaymentTarget] = useState<Record<string, any> | null>(null);
+  const [tanggalBayar, setTanggalBayar] = useState(new Date().toISOString().split('T')[0]);
   const [jumlahBayar, setJumlahBayar] = useState('');
   const [metodeBayar, setMetodeBayar] = useState('Transfer Bank Mandiri Giro');
   const [referensiBank, setReferensiBank] = useState('TRX-MDR-20261108-7781');
@@ -2971,7 +2973,7 @@ export const InvoicesModule: React.FC<{
     e.preventDefault();
     if (!paymentTarget || !jumlahBayar) return;
     await apiPost(`/api/invoices/${paymentTarget.id}/payments`, {
-      tanggal_bayar: '2026-11-08',
+      tanggal_bayar: tanggalBayar,
       jumlah: Number(jumlahBayar),
       metode: metodeBayar,
       referensi_bank: referensiBank,
@@ -3228,6 +3230,27 @@ export const InvoicesModule: React.FC<{
                         <Printer className="w-3 h-3" />
                         PDF
                       </button>
+                      {Number(inv.total_dibayar) > 0 && (
+                        <button
+                          onClick={() => {
+                            const latestPayment = Array.isArray(inv.payments) && inv.payments.length > 0 ? inv.payments[inv.payments.length - 1] : null;
+                            onPrintDocument('RECEIPT', {
+                              ...inv,
+                              latest_payment: latestPayment,
+                              nomor_kwitansi: latestPayment?.nomor_kwitansi,
+                              jumlah_bayar: latestPayment?.jumlah || inv.total_dibayar,
+                              tanggal_bayar: latestPayment?.tanggal_bayar,
+                              metode_bayar: latestPayment?.metode,
+                              nomor_referensi: latestPayment?.referensi_bank,
+                            });
+                          }}
+                          className="px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-medium rounded flex items-center gap-1 cursor-pointer"
+                          title="Cetak Kwitansi Pembayaran Resmi"
+                        >
+                          <ReceiptText className="w-3 h-3 text-teal-600" />
+                          Kwitansi
+                        </button>
+                      )}
                       {sisa > 0 && canRecordPayment && (
                         <button
                           onClick={() => {

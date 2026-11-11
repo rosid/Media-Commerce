@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Receipt,
+  ReceiptText,
   Server,
   Settings,
   Shield,
@@ -44,6 +45,7 @@ import {
   ProofsModule,
   InvoicesModule,
 } from './components/OperationalViews';
+import { ReceiptsModule } from './components/ReceiptsView';
 import {
   SchedulesCalendarModule,
   ApprovalsModule,
@@ -848,6 +850,12 @@ export default function App() {
       visible: checkPerm(permissions, 'invoices', 'view'),
     },
     {
+      id: 'receipts',
+      label: 'Kwitansi (Receipt)',
+      icon: ReceiptText,
+      visible: checkPerm(permissions, 'invoices', 'view') || checkPerm(permissions, 'payments', 'view'),
+    },
+    {
       id: 'approvals',
       label: 'Persetujuan (Approval)',
       icon: CheckSquare,
@@ -1405,6 +1413,22 @@ export default function App() {
                 showToast('Invoice & pembayaran berhasil diperbarui.');
               }}
               onPrintDocument={(type, data) => setPrintModal({ type, data })}
+            />
+          )}
+
+          {activeTab === 'receipts' && (
+            <ReceiptsModule
+              currentUser={currentUser}
+              permissions={permissions}
+              invoices={invoices}
+              companySettings={settingsData?.settings || {}}
+              apiPost={apiPost}
+              showToast={showToast}
+              onRefresh={() => {
+                loadAllWorkspaceData();
+                showToast('Data kwitansi berhasil diperbarui.');
+              }}
+              onOpenPrintModal={(receiptData) => setPrintModal({ type: 'RECEIPT', data: receiptData })}
             />
           )}
 

@@ -1451,6 +1451,7 @@ export const SettingsModule: React.FC<{
     MO: 'MO',
     BT: 'BT',
     INV: 'INV',
+    KWT: 'KWT',
   });
   const [seqFormats, setSeqFormats] = useState<Record<string, string>>({
     QT: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
@@ -1458,6 +1459,7 @@ export const SettingsModule: React.FC<{
     MO: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
     BT: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
     INV: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    KWT: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
   });
   const [seqCounters, setSeqCounters] = useState<Array<any>>([]);
   const [isSavingSeq, setIsSavingSeq] = useState(false);
@@ -1536,6 +1538,7 @@ export const SettingsModule: React.FC<{
       MO: rawSettings.seq_code_MO || 'MO',
       BT: rawSettings.seq_code_BT || 'BT',
       INV: rawSettings.seq_code_INV || 'INV',
+      KWT: rawSettings.seq_code_KWT || 'KWT',
     });
     setSeqFormats({
       QT: rawSettings.seq_format_QT || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
@@ -1543,6 +1546,7 @@ export const SettingsModule: React.FC<{
       MO: rawSettings.seq_format_MO || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
       BT: rawSettings.seq_format_BT || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
       INV: rawSettings.seq_format_INV || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+      KWT: rawSettings.seq_format_KWT || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
     });
   }, [rawSettings]);
 
@@ -1790,7 +1794,7 @@ export const SettingsModule: React.FC<{
     }
   };
 
-  const computeLivePreview = (docKey: 'QT' | 'DL' | 'MO' | 'BT' | 'INV') => {
+  const computeLivePreview = (docKey: 'QT' | 'DL' | 'MO' | 'BT' | 'INV' | 'KWT') => {
     const d = new Date();
     const y4 = String(d.getFullYear());
     const y2 = y4.slice(-2);
@@ -2102,6 +2106,11 @@ export const SettingsModule: React.FC<{
       key: 'DEAL_PROGRESS',
       label: 'Laporan Progres Deal',
       desc: 'Pengaturan penandatangan untuk cetak Laporan Progres Paket Deal',
+    },
+    {
+      key: 'RECEIPT',
+      label: 'Kwitansi (Receipt)',
+      desc: 'Pengaturan penandatangan tanda terima bukti pembayaran (mis. Kasir / Otorisasi Keuangan)',
     },
   ];
 
@@ -3432,19 +3441,20 @@ export const SettingsModule: React.FC<{
             )}
           </div>
 
-          {/* 1. LIVE PREVIEW STRIP (5 KARTU DOKUMEN) */}
+          {/* 1. LIVE PREVIEW STRIP (6 KARTU DOKUMEN) */}
           <div>
             <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <Eye className="w-3.5 h-3.5 text-blue-600" />
               Pratinjau Nomor Dokumen Berikutnya (Live Preview)
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
                 { key: 'QT' as const, label: 'Quotation', bg: 'bg-blue-50 border-blue-200 text-blue-900', badge: 'bg-blue-600 text-white' },
                 { key: 'DL' as const, label: 'Paket Deal', bg: 'bg-indigo-50 border-indigo-200 text-indigo-900', badge: 'bg-indigo-600 text-white' },
                 { key: 'MO' as const, label: 'Media Order (MO)', bg: 'bg-emerald-50 border-emerald-200 text-emerald-900', badge: 'bg-emerald-600 text-white' },
                 { key: 'BT' as const, label: 'Bukti Tayang', bg: 'bg-amber-50 border-amber-200 text-amber-900', badge: 'bg-amber-600 text-white' },
-                { key: 'INV' as const, label: 'Invoice Penagihan', bg: 'bg-rose-50 border-rose-200 text-rose-900', badge: 'bg-rose-600 text-white' },
+                { key: 'INV' as const, label: 'Invoice', bg: 'bg-rose-50 border-rose-200 text-rose-900', badge: 'bg-rose-600 text-white' },
+                { key: 'KWT' as const, label: 'Kwitansi', bg: 'bg-teal-50 border-teal-200 text-teal-900', badge: 'bg-teal-600 text-white' },
               ].map((doc) => (
                 <div key={doc.key} className={`border rounded-xl p-3.5 ${doc.bg} shadow-2xs`}>
                   <div className="flex items-center justify-between gap-1 mb-1.5">
@@ -3631,7 +3641,8 @@ export const SettingsModule: React.FC<{
                     { key: 'DL' as const, label: 'Paket Deal', desc: 'Konfirmasi kesepakatan komersial' },
                     { key: 'MO' as const, label: 'Media Order (MO)', desc: 'Surat perintah tayang inventori' },
                     { key: 'BT' as const, label: 'Bukti Tayang', desc: 'Laporan tayang dan verifikasi' },
-                    { key: 'INV' as const, label: 'Invoice Penagihan', desc: 'Faktur penagihan pembayaran klien' },
+                    { key: 'INV' as const, label: 'Invoice', desc: 'Faktur penagihan pembayaran klien' },
+                    { key: 'KWT' as const, label: 'Kwitansi (Receipt)', desc: 'Tanda bukti pembayaran resmi yang diterima' },
                   ].map((row) => (
                     <tr key={row.key} className="hover:bg-slate-50/50 transition-colors">
                       <td className="py-3 px-4">
@@ -3724,6 +3735,7 @@ export const SettingsModule: React.FC<{
                         MO: 'Media Order',
                         BT: 'Bukti Tayang',
                         INV: 'Invoice',
+                        KWT: 'Kwitansi Pembayaran',
                       };
                       const periodeLabel =
                         c.tahun === 0

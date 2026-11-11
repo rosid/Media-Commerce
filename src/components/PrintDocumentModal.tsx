@@ -10,7 +10,7 @@ import {
   PdfSignatorySlot,
 } from '../utils/format';
 
-export type PrintableDocType = 'QUOTATION' | 'MEDIA_ORDER' | 'PROOF' | 'INVOICE' | 'DEAL_PROGRESS';
+export type PrintableDocType = 'QUOTATION' | 'MEDIA_ORDER' | 'PROOF' | 'INVOICE' | 'DEAL_PROGRESS' | 'RECEIPT';
 
 interface PrintDocumentModalProps {
   docType: PrintableDocType;
@@ -47,6 +47,12 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
   const activeSignatories: PdfSignatorySlot[] = signaturesMap[docType] || signaturesMap.QUOTATION;
 
   const resolveSignatoryPerson = (slot: PdfSignatorySlot) => {
+    if (docType === 'RECEIPT') {
+      return {
+        nama: data.nama_pencatat || slot.nama || 'Siti Rahmawati',
+        jabatan: data.jabatan_pencatat || slot.jabatan || 'Billing & Finance Officer',
+      };
+    }
     if (slot.mode_penandatangan === 'pembuat') {
       return {
         nama: data.nama_sales || data.pembuat_nama || data.pic_internal || slot.nama || companyName,
@@ -84,6 +90,8 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
         return 'INVOICE';
       case 'DEAL_PROGRESS':
         return 'LAPORAN PROGRES PAKET DEAL';
+      case 'RECEIPT':
+        return 'KWITANSI';
     }
   };
 
@@ -159,13 +167,13 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
             <div className="text-right shrink-0">
               <div className="text-lg font-bold tracking-tight text-slate-900">{getDocTitle()}</div>
               <div className="text-sm font-mono font-semibold text-blue-700 mt-0.5">
-                No: {data.nomor}
+                No: {data.nomor_kwitansi || data.nomor}
                 {docType === 'QUOTATION' && data.versi_aktif ? ` (Rev.${data.versi_aktif})` : ''}
               </div>
               <div className="text-xs text-slate-600 mt-1">
-                Tanggal: <span className="font-mono">{formatDateId(data.tanggal_terbit || data.periode_mulai || data.created_at)}</span>
+                Tanggal: <span className="font-mono">{formatDateId(data.tanggal_bayar || data.tanggal_terbit || data.periode_mulai || data.created_at)}</span>
                 {' · '}
-                Status: <span className="font-semibold text-slate-900">{data.status}</span>
+                Status: <span className="font-semibold text-slate-900">{data.status || 'Diterima'}</span>
               </div>
             </div>
           </div>
@@ -330,6 +338,91 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                 <div>
                   <span className="text-slate-500 font-sans">Progres Keseluruhan: </span>
                   <span className="font-bold text-emerald-700">{data.ringkasan_kuota?.persen_progres || 0}% Tayang</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {docType === 'RECEIPT' && (
+            <div className="py-6 border-b border-slate-200 text-xs space-y-4">
+              <div className="grid grid-cols-12 gap-3 pb-3 border-b border-slate-100">
+                <div className="col-span-3 text-slate-500 font-semibold uppercase tracking-wider text-[11px] pt-0.5">
+                  Telah Diterima Dari:
+                </div>
+                <div className="col-span-9">
+                  <div className="text-sm font-bold text-slate-900">
+                    {data.snapshot_nama_klien || data.nama_klien || data.diterima_dari || 'Pihak Klien'}
+                  </div>
+                  {data.snapshot_alamat && (
+                    <div className="text-slate-600 text-xs mt-0.5">{data.snapshot_alamat}</div>
+                  )}
+                  <div className="text-slate-500 font-mono text-[11px] mt-0.5 flex flex-wrap gap-x-4">
+                    {data.snapshot_npwp && <span>NPWP: {data.snapshot_npwp}</span>}
+                    {data.snapshot_pic && <span>UP/PIC: {data.snapshot_pic}</span>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 gap-3 py-2 items-center">
+                <div className="col-span-3 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
+                  Uang Sejumlah:
+                </div>
+                <div className="col-span-9 p-3.5 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl">
+                  <div className="text-slate-500 text-[10px] uppercase font-mono tracking-wider mb-0.5">Terbilang:</div>
+                  <div className="font-bold italic text-slate-900 text-sm md:text-base leading-relaxed">
+                    # {terbilangRupiah(Number(data.jumlah || 0))} #
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 gap-3 py-2">
+                <div className="col-span-3 text-slate-500 font-semibold uppercase tracking-wider text-[11px] pt-0.5">
+                  Untuk Pembayaran:
+                </div>
+                <div className="col-span-9 space-y-1.5">
+                  <div className="font-bold text-slate-900 text-xs leading-relaxed">
+                    {data.untuk_pembayaran || `Pembayaran Invoice #${data.nomor_invoice || data.nomor}`}
+                  </div>
+                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 font-mono text-[11px] text-slate-600 space-y-0.5">
+                    <div>
+                      Ref. Dokumen Invoice: <span className="text-blue-700 font-bold">{data.nomor_invoice || data.nomor || '-'}</span>
+                      {data.total_tagihan_invoice ? ` (Total Tagihan: ${formatRupiah(data.total_tagihan_invoice)})` : ''}
+                    </div>
+                    {data.nama_kampanye && (
+                      <div>Nama Kampanye: <span className="font-semibold text-slate-800">{data.nama_kampanye}</span></div>
+                    )}
+                    {data.nomor_deal && (
+                      <div>Ref. Paket Deal: <span className="text-slate-700">{data.nomor_deal}</span></div>
+                    )}
+                  </div>
+                  {data.catatan && (
+                    <div className="text-slate-500 italic text-[11px]">
+                      Catatan Tambahan: {data.catatan}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 gap-3 pt-3 border-t border-slate-100">
+                <div className="col-span-3 text-slate-500 font-semibold uppercase tracking-wider text-[11px] pt-1">
+                  Nominal & Bank:
+                </div>
+                <div className="col-span-9">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-emerald-50/80 border-2 border-emerald-300 rounded-xl gap-4">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-emerald-800 font-bold font-mono">
+                        Jumlah Dana Telah Diterima (IDR)
+                      </span>
+                      <div className="text-2xl font-bold font-mono text-emerald-950 mt-0.5">
+                        {formatRupiah(data.jumlah)}
+                      </div>
+                    </div>
+                    <div className="text-right text-[11px] font-mono text-slate-700 space-y-0.5 self-end sm:self-center border-t sm:border-t-0 sm:border-l sm:pl-4 border-emerald-200 pt-2 sm:pt-0">
+                      <div>Metode Bayar: <strong className="text-slate-900">{data.metode || 'Transfer Bank'}</strong></div>
+                      <div>Referensi Transaksi: <strong className="text-slate-900">{data.referensi_bank || '-'}</strong></div>
+                      <div>Rekening Tujuan: <span className="text-slate-600">{companySettings.bank_nama || 'Bank Mandiri'} ({companySettings.bank_rekening || '-'})</span></div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

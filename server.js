@@ -531,12 +531,16 @@ function initDatabase(mode = "clean") {
 
     CREATE TABLE IF NOT EXISTS payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nomor_kwitansi TEXT UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
       tanggal_bayar TEXT NOT NULL,
       jumlah REAL NOT NULL,
       metode TEXT NOT NULL,
       referensi_bank TEXT NOT NULL,
       bukti_file TEXT,
+      untuk_pembayaran TEXT,
+      catatan TEXT,
+      status TEXT NOT NULL DEFAULT 'Diterima',
       dicatat_oleh INTEGER NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -617,6 +621,19 @@ function initDatabase(mode = "clean") {
   if (!qvCols.includes("diskon_tipe")) {
     db.exec(`ALTER TABLE quotation_versions ADD COLUMN diskon_tipe TEXT NOT NULL DEFAULT 'persen';`);
   }
+  const payCols = db.prepare("PRAGMA table_info(payments)").all().map((c) => c.name);
+  if (!payCols.includes("nomor_kwitansi")) {
+    db.exec(`ALTER TABLE payments ADD COLUMN nomor_kwitansi TEXT;`);
+  }
+  if (!payCols.includes("untuk_pembayaran")) {
+    db.exec(`ALTER TABLE payments ADD COLUMN untuk_pembayaran TEXT;`);
+  }
+  if (!payCols.includes("catatan")) {
+    db.exec(`ALTER TABLE payments ADD COLUMN catatan TEXT;`);
+  }
+  if (!payCols.includes("status")) {
+    db.exec(`ALTER TABLE payments ADD COLUMN status TEXT NOT NULL DEFAULT 'Diterima';`);
+  }
   const countCategories = db.prepare("SELECT COUNT(*) as c FROM catalog_categories").get().c;
   if (countCategories === 0) {
     const insCat = db.prepare("INSERT INTO catalog_categories (nama, deskripsi, urutan) VALUES (?, ?, ?)");
@@ -674,11 +691,13 @@ function initDatabase(mode = "clean") {
     ["seq_code_MO", "MO"],
     ["seq_code_BT", "BT"],
     ["seq_code_INV", "INV"],
+    ["seq_code_KWT", "KWT"],
     ["seq_format_QT", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
     ["seq_format_DL", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
     ["seq_format_MO", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
     ["seq_format_BT", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
-    ["seq_format_INV", "{KODE}/{TAHUN}/{BULAN}/{URUT}"]
+    ["seq_format_INV", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_format_KWT", "{KODE}/{TAHUN}/{BULAN}/{URUT}"]
   ];
   const insWebSetting = db.prepare("INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)");
   for (const [k, v] of defaultWebSettings) {
@@ -713,21 +732,24 @@ function getSequenceConfig() {
     DL: "DL",
     MO: "MO",
     BT: "BT",
-    INV: "INV"
+    INV: "INV",
+    KWT: "KWT"
   };
   const codes = {
     QT: map.seq_code_QT || defaultCodes.QT,
     DL: map.seq_code_DL || defaultCodes.DL,
     MO: map.seq_code_MO || defaultCodes.MO,
     BT: map.seq_code_BT || defaultCodes.BT,
-    INV: map.seq_code_INV || defaultCodes.INV
+    INV: map.seq_code_INV || defaultCodes.INV,
+    KWT: map.seq_code_KWT || defaultCodes.KWT
   };
   const formats = {
     QT: map.seq_format_QT || global_format,
     DL: map.seq_format_DL || global_format,
     MO: map.seq_format_MO || global_format,
     BT: map.seq_format_BT || global_format,
-    INV: map.seq_format_INV || global_format
+    INV: map.seq_format_INV || global_format,
+    KWT: map.seq_format_KWT || global_format
   };
   return { global_format, formats, codes, digits, reset_period };
 }
@@ -3379,35 +3401,153 @@ async function startServer() {
       res.status(404).json({ error: "Invoice tidak ditemukan." });
       return;
     }
-    const { tanggal_bayar, jumlah, metode, referensi_bank, bukti_file } = req.body;
+    const { tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan } = req.body;
     const bayarBaru = Number(jumlah || 0);
     const totalDibayarBaru = Number(inv.total_dibayar) + bayarBaru;
     const statusBaru = totalDibayarBaru >= Number(inv.total_tagihan) ? "Lunas" : "Dibayar Sebagian";
+    const tanggal = tanggal_bayar || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const nomorKwitansi = generateDocumentNumber("KWT", tanggal);
+    const descPembayaran = untuk_pembayaran || `Pembayaran Invoice #${inv.nomor}`;
+    let newPaymentId = 0;
     db.transaction(() => {
-      db.prepare(`
-        INSERT INTO payments (invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, dicatat_oleh)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+      const r = db.prepare(`
+        INSERT INTO payments (nomor_kwitansi, invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan, status, dicatat_oleh)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Diterima', ?)
       `).run(
+        nomorKwitansi,
         invoiceId,
-        tanggal_bayar || "2026-11-08",
+        tanggal,
         bayarBaru,
-        metode || "Transfer Bank Mandiri Giro",
-        referensi_bank || "TRX-BANK-2026",
-        bukti_file || "bukti-bayar.pdf",
+        metode || "Transfer Bank",
+        referensi_bank || "-",
+        bukti_file || null,
+        descPembayaran,
+        catatan || null,
         user.id
       );
+      newPaymentId = Number(r.lastInsertRowid);
       db.prepare("UPDATE invoices SET total_dibayar = ?, status = ? WHERE id = ?").run(totalDibayarBaru, statusBaru, invoiceId);
     })();
     logAudit(
       user,
-      "Pembayaran",
+      "Pembayaran & Kwitansi",
       "RECORD_PAYMENT",
-      inv.nomor,
-      `Mencatat pembayaran Rp ${bayarBaru.toLocaleString("id-ID")} pada Invoice ${inv.nomor}. Status menjadi: ${statusBaru}`,
+      nomorKwitansi,
+      `Mencatat pembayaran Rp ${bayarBaru.toLocaleString("id-ID")} (Kwitansi ${nomorKwitansi}) pada Invoice ${inv.nomor}. Status menjadi: ${statusBaru}`,
       { total_dibayar: inv.total_dibayar, status: inv.status },
-      { total_dibayar: totalDibayarBaru, status: statusBaru, referensi_bank }
+      { total_dibayar: totalDibayarBaru, status: statusBaru, referensi_bank, nomor_kwitansi: nomorKwitansi }
     );
-    res.json({ success: true, status: statusBaru, total_dibayar: totalDibayarBaru });
+    res.json({
+      success: true,
+      id: newPaymentId,
+      nomor_kwitansi: nomorKwitansi,
+      status: statusBaru,
+      total_dibayar: totalDibayarBaru
+    });
+  });
+  app.get("/api/receipts", authenticateJWT, (_req, res) => {
+    try {
+      const unnumbered = db.prepare('SELECT id, tanggal_bayar FROM payments WHERE nomor_kwitansi IS NULL OR nomor_kwitansi = ""').all();
+      for (const p of unnumbered) {
+        const noKwt = generateDocumentNumber("KWT", p.tanggal_bayar);
+        db.prepare("UPDATE payments SET nomor_kwitansi = ? WHERE id = ?").run(noKwt, p.id);
+      }
+    } catch {
+    }
+    const receipts = db.prepare(`
+        SELECT py.*,
+               inv.nomor as nomor_invoice,
+               inv.tanggal_terbit as tanggal_invoice,
+               inv.jatuh_tempo as jatuh_tempo_invoice,
+               inv.total_tagihan as total_tagihan_invoice,
+               inv.total_dibayar as total_dibayar_invoice,
+               inv.status as status_invoice,
+               inv.snapshot_nama_klien,
+               inv.snapshot_alamat,
+               inv.snapshot_npwp,
+               inv.snapshot_pic,
+               d.nama_kampanye,
+               d.nomor as nomor_deal,
+               q.nomor as nomor_quotation,
+               c.nama as nama_klien,
+               u.nama as nama_pencatat,
+               u.jabatan as jabatan_pencatat
+        FROM payments py
+        JOIN invoices inv ON inv.id = py.invoice_id
+        LEFT JOIN deals d ON d.id = inv.deal_id
+        LEFT JOIN quotations q ON q.id = inv.quotation_id
+        LEFT JOIN clients c ON c.id = inv.client_id
+        LEFT JOIN users u ON u.id = py.dicatat_oleh
+        ORDER BY py.tanggal_bayar DESC, py.id DESC
+      `).all();
+    res.json({ receipts });
+  });
+  app.post("/api/receipts", authenticateJWT, (req, res) => {
+    const user = req.user;
+    const perm = getPermission(user.role_id, "payments");
+    if (!perm?.can_create && user.role_id !== 1 && user.role_kode !== "super_admin") {
+      res.status(403).json({ error: "Tidak memiliki izin menerbitkan kwitansi / mencatat pembayaran." });
+      return;
+    }
+    const { invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan } = req.body;
+    const inv = db.prepare(`
+      SELECT inv.*, d.nama_kampanye, c.nama as nama_klien
+      FROM invoices inv
+      LEFT JOIN deals d ON d.id = inv.deal_id
+      LEFT JOIN clients c ON c.id = inv.client_id
+      WHERE inv.id = ?
+    `).get(Number(invoice_id));
+    if (!inv) {
+      res.status(404).json({ error: "Invoice referensi tidak ditemukan." });
+      return;
+    }
+    const bayarBaru = Number(jumlah || 0);
+    if (bayarBaru <= 0) {
+      res.status(400).json({ error: "Nominal pembayaran kwitansi harus lebih dari Rp 0." });
+      return;
+    }
+    const tanggal = tanggal_bayar || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const nomorKwitansi = generateDocumentNumber("KWT", tanggal);
+    const totalDibayarBaru = Number(inv.total_dibayar) + bayarBaru;
+    const statusBaru = totalDibayarBaru >= Number(inv.total_tagihan) ? "Lunas" : "Dibayar Sebagian";
+    const descPembayaran = untuk_pembayaran || `Pembayaran Invoice #${inv.nomor}${inv.nama_kampanye ? ` \u2014 Kampanye ${inv.nama_kampanye}` : ""}`;
+    let newReceiptId = 0;
+    db.transaction(() => {
+      const r = db.prepare(`
+        INSERT INTO payments (nomor_kwitansi, invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan, status, dicatat_oleh)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Diterima', ?)
+      `).run(
+        nomorKwitansi,
+        inv.id,
+        tanggal,
+        bayarBaru,
+        metode || "Transfer Bank",
+        referensi_bank || "-",
+        bukti_file || null,
+        descPembayaran,
+        catatan || null,
+        user.id
+      );
+      newReceiptId = Number(r.lastInsertRowid);
+      db.prepare("UPDATE invoices SET total_dibayar = ?, status = ? WHERE id = ?").run(totalDibayarBaru, statusBaru, inv.id);
+    })();
+    logAudit(
+      user,
+      "Kwitansi & Pembayaran",
+      "CREATE_RECEIPT",
+      nomorKwitansi,
+      `Menerbitkan Kwitansi ${nomorKwitansi} sebesar Rp ${bayarBaru.toLocaleString("id-ID")} untuk Invoice ${inv.nomor} (${inv.snapshot_nama_klien || inv.nama_klien})`,
+      null,
+      { nomor_kwitansi: nomorKwitansi, invoice_id: inv.id, jumlah: bayarBaru, metode }
+    );
+    res.json({
+      success: true,
+      id: newReceiptId,
+      nomor_kwitansi: nomorKwitansi,
+      invoice_status: statusBaru,
+      total_dibayar: totalDibayarBaru,
+      message: `Kwitansi ${nomorKwitansi} berhasil diterbitkan.`
+    });
   });
   app.get("/api/approvals", authenticateJWT, (_req, res) => {
     const approvals = db.prepare(`
@@ -3657,7 +3797,7 @@ async function startServer() {
     const config = getSequenceConfig();
     const counters = db.prepare("SELECT * FROM number_sequences ORDER BY tahun DESC, kode_dokumen ASC").all();
     const now = /* @__PURE__ */ new Date();
-    const docTypes = ["QT", "DL", "MO", "BT", "INV"];
+    const docTypes = ["QT", "DL", "MO", "BT", "INV", "KWT"];
     const previews = {};
     for (const doc of docTypes) {
       const docCode = config.codes[doc] || doc;

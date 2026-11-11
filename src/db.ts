@@ -555,12 +555,16 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
 
     CREATE TABLE IF NOT EXISTS payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nomor_kwitansi TEXT UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
       tanggal_bayar TEXT NOT NULL,
       jumlah REAL NOT NULL,
       metode TEXT NOT NULL,
       referensi_bank TEXT NOT NULL,
       bukti_file TEXT,
+      untuk_pembayaran TEXT,
+      catatan TEXT,
+      status TEXT NOT NULL DEFAULT 'Diterima',
       dicatat_oleh INTEGER NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -650,6 +654,21 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
     db.exec(`ALTER TABLE quotation_versions ADD COLUMN diskon_tipe TEXT NOT NULL DEFAULT 'persen';`);
   }
 
+  // Ensure Kwitansi (Receipt) columns exist in payments
+  const payCols = (db.prepare('PRAGMA table_info(payments)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!payCols.includes('nomor_kwitansi')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN nomor_kwitansi TEXT;`);
+  }
+  if (!payCols.includes('untuk_pembayaran')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN untuk_pembayaran TEXT;`);
+  }
+  if (!payCols.includes('catatan')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN catatan TEXT;`);
+  }
+  if (!payCols.includes('status')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN status TEXT NOT NULL DEFAULT 'Diterima';`);
+  }
+
   // Ensure catalog categories exist
   const countCategories = (db.prepare('SELECT COUNT(*) as c FROM catalog_categories').get() as { c: number }).c;
   if (countCategories === 0) {
@@ -709,11 +728,13 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
     ['seq_code_MO', 'MO'],
     ['seq_code_BT', 'BT'],
     ['seq_code_INV', 'INV'],
+    ['seq_code_KWT', 'KWT'],
     ['seq_format_QT', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
     ['seq_format_DL', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
     ['seq_format_MO', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
     ['seq_format_BT', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
     ['seq_format_INV', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_format_KWT', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
   ];
 
   const insWebSetting = db.prepare('INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)');
@@ -754,6 +775,7 @@ export function getSequenceConfig(): SequenceFormatConfig {
     MO: 'MO',
     BT: 'BT',
     INV: 'INV',
+    KWT: 'KWT',
   };
 
   const codes: Record<string, string> = {
@@ -762,6 +784,7 @@ export function getSequenceConfig(): SequenceFormatConfig {
     MO: map.seq_code_MO || defaultCodes.MO,
     BT: map.seq_code_BT || defaultCodes.BT,
     INV: map.seq_code_INV || defaultCodes.INV,
+    KWT: map.seq_code_KWT || defaultCodes.KWT,
   };
 
   const formats: Record<string, string> = {
@@ -770,6 +793,7 @@ export function getSequenceConfig(): SequenceFormatConfig {
     MO: map.seq_format_MO || global_format,
     BT: map.seq_format_BT || global_format,
     INV: map.seq_format_INV || global_format,
+    KWT: map.seq_format_KWT || global_format,
   };
 
   return { global_format, formats, codes, digits, reset_period };
@@ -800,7 +824,7 @@ export function formatSequenceNumber(
     .replace(/{URUT}/g, paddedSeq);
 }
 
-export function generateDocumentNumber(kode: 'QT' | 'DL' | 'MO' | 'BT' | 'INV', dateStr?: string): string {
+export function generateDocumentNumber(kode: 'QT' | 'DL' | 'MO' | 'BT' | 'INV' | 'KWT', dateStr?: string): string {
   const now = dateStr ? new Date(dateStr) : new Date();
   const validDate = isNaN(now.getTime()) ? new Date() : now;
 

@@ -2666,39 +2666,175 @@ async function startServer() {
       return;
     }
 
-    const { tanggal_bayar, jumlah, metode, referensi_bank, bukti_file } = req.body;
+    const { tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan } = req.body;
     const bayarBaru = Number(jumlah || 0);
     const totalDibayarBaru = Number(inv.total_dibayar) + bayarBaru;
     const statusBaru = totalDibayarBaru >= Number(inv.total_tagihan) ? 'Lunas' : 'Dibayar Sebagian';
 
+    const tanggal = tanggal_bayar || new Date().toISOString().split('T')[0];
+    const nomorKwitansi = generateDocumentNumber('KWT', tanggal);
+    const descPembayaran = untuk_pembayaran || `Pembayaran Invoice #${inv.nomor}`;
+
+    let newPaymentId = 0;
     db.transaction(() => {
-      db.prepare(`
-        INSERT INTO payments (invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, dicatat_oleh)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+      const r = db.prepare(`
+        INSERT INTO payments (nomor_kwitansi, invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan, status, dicatat_oleh)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Diterima', ?)
       `).run(
+        nomorKwitansi,
         invoiceId,
-        tanggal_bayar || '2026-11-08',
+        tanggal,
         bayarBaru,
-        metode || 'Transfer Bank Mandiri Giro',
-        referensi_bank || 'TRX-BANK-2026',
-        bukti_file || 'bukti-bayar.pdf',
+        metode || 'Transfer Bank',
+        referensi_bank || '-',
+        bukti_file || null,
+        descPembayaran,
+        catatan || null,
         user.id
       );
+      newPaymentId = Number(r.lastInsertRowid);
 
       db.prepare('UPDATE invoices SET total_dibayar = ?, status = ? WHERE id = ?').run(totalDibayarBaru, statusBaru, invoiceId);
     })();
 
     logAudit(
       user,
-      'Pembayaran',
+      'Pembayaran & Kwitansi',
       'RECORD_PAYMENT',
-      inv.nomor,
-      `Mencatat pembayaran Rp ${bayarBaru.toLocaleString('id-ID')} pada Invoice ${inv.nomor}. Status menjadi: ${statusBaru}`,
+      nomorKwitansi,
+      `Mencatat pembayaran Rp ${bayarBaru.toLocaleString('id-ID')} (Kwitansi ${nomorKwitansi}) pada Invoice ${inv.nomor}. Status menjadi: ${statusBaru}`,
       { total_dibayar: inv.total_dibayar, status: inv.status },
-      { total_dibayar: totalDibayarBaru, status: statusBaru, referensi_bank }
+      { total_dibayar: totalDibayarBaru, status: statusBaru, referensi_bank, nomor_kwitansi: nomorKwitansi }
     );
 
-    res.json({ success: true, status: statusBaru, total_dibayar: totalDibayarBaru });
+    res.json({
+      success: true,
+      id: newPaymentId,
+      nomor_kwitansi: nomorKwitansi,
+      status: statusBaru,
+      total_dibayar: totalDibayarBaru
+    });
+  });
+
+  // ============================================================================
+  // KWITANSI / OFFICIAL RECEIPTS ENDPOINTS
+  // ============================================================================
+  app.get('/api/receipts', authenticateJWT, (_req: AuthRequest, res: Response) => {
+    // Backfill any unnumbered receipts on older records
+    try {
+      const unnumbered = db.prepare('SELECT id, tanggal_bayar FROM payments WHERE nomor_kwitansi IS NULL OR nomor_kwitansi = ""').all() as Array<{ id: number; tanggal_bayar: string }>;
+      for (const p of unnumbered) {
+        const noKwt = generateDocumentNumber('KWT', p.tanggal_bayar);
+        db.prepare('UPDATE payments SET nomor_kwitansi = ? WHERE id = ?').run(noKwt, p.id);
+      }
+    } catch {}
+
+    const receipts = db
+      .prepare(`
+        SELECT py.*,
+               inv.nomor as nomor_invoice,
+               inv.tanggal_terbit as tanggal_invoice,
+               inv.jatuh_tempo as jatuh_tempo_invoice,
+               inv.total_tagihan as total_tagihan_invoice,
+               inv.total_dibayar as total_dibayar_invoice,
+               inv.status as status_invoice,
+               inv.snapshot_nama_klien,
+               inv.snapshot_alamat,
+               inv.snapshot_npwp,
+               inv.snapshot_pic,
+               d.nama_kampanye,
+               d.nomor as nomor_deal,
+               q.nomor as nomor_quotation,
+               c.nama as nama_klien,
+               u.nama as nama_pencatat,
+               u.jabatan as jabatan_pencatat
+        FROM payments py
+        JOIN invoices inv ON inv.id = py.invoice_id
+        LEFT JOIN deals d ON d.id = inv.deal_id
+        LEFT JOIN quotations q ON q.id = inv.quotation_id
+        LEFT JOIN clients c ON c.id = inv.client_id
+        LEFT JOIN users u ON u.id = py.dicatat_oleh
+        ORDER BY py.tanggal_bayar DESC, py.id DESC
+      `)
+      .all();
+
+    res.json({ receipts });
+  });
+
+  app.post('/api/receipts', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    const perm = getPermission(user.role_id, 'payments');
+    if (!perm?.can_create && user.role_id !== 1 && user.role_kode !== 'super_admin') {
+      res.status(403).json({ error: 'Tidak memiliki izin menerbitkan kwitansi / mencatat pembayaran.' });
+      return;
+    }
+
+    const { invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan } = req.body;
+    const inv = db.prepare(`
+      SELECT inv.*, d.nama_kampanye, c.nama as nama_klien
+      FROM invoices inv
+      LEFT JOIN deals d ON d.id = inv.deal_id
+      LEFT JOIN clients c ON c.id = inv.client_id
+      WHERE inv.id = ?
+    `).get(Number(invoice_id)) as Record<string, any> | undefined;
+
+    if (!inv) {
+      res.status(404).json({ error: 'Invoice referensi tidak ditemukan.' });
+      return;
+    }
+
+    const bayarBaru = Number(jumlah || 0);
+    if (bayarBaru <= 0) {
+      res.status(400).json({ error: 'Nominal pembayaran kwitansi harus lebih dari Rp 0.' });
+      return;
+    }
+
+    const tanggal = tanggal_bayar || new Date().toISOString().split('T')[0];
+    const nomorKwitansi = generateDocumentNumber('KWT', tanggal);
+    const totalDibayarBaru = Number(inv.total_dibayar) + bayarBaru;
+    const statusBaru = totalDibayarBaru >= Number(inv.total_tagihan) ? 'Lunas' : 'Dibayar Sebagian';
+
+    const descPembayaran = untuk_pembayaran || `Pembayaran Invoice #${inv.nomor}${inv.nama_kampanye ? ` — Kampanye ${inv.nama_kampanye}` : ''}`;
+
+    let newReceiptId = 0;
+    db.transaction(() => {
+      const r = db.prepare(`
+        INSERT INTO payments (nomor_kwitansi, invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan, status, dicatat_oleh)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Diterima', ?)
+      `).run(
+        nomorKwitansi,
+        inv.id,
+        tanggal,
+        bayarBaru,
+        metode || 'Transfer Bank',
+        referensi_bank || '-',
+        bukti_file || null,
+        descPembayaran,
+        catatan || null,
+        user.id
+      );
+      newReceiptId = Number(r.lastInsertRowid);
+      db.prepare('UPDATE invoices SET total_dibayar = ?, status = ? WHERE id = ?').run(totalDibayarBaru, statusBaru, inv.id);
+    })();
+
+    logAudit(
+      user,
+      'Kwitansi & Pembayaran',
+      'CREATE_RECEIPT',
+      nomorKwitansi,
+      `Menerbitkan Kwitansi ${nomorKwitansi} sebesar Rp ${bayarBaru.toLocaleString('id-ID')} untuk Invoice ${inv.nomor} (${inv.snapshot_nama_klien || inv.nama_klien})`,
+      null,
+      { nomor_kwitansi: nomorKwitansi, invoice_id: inv.id, jumlah: bayarBaru, metode }
+    );
+
+    res.json({
+      success: true,
+      id: newReceiptId,
+      nomor_kwitansi: nomorKwitansi,
+      invoice_status: statusBaru,
+      total_dibayar: totalDibayarBaru,
+      message: `Kwitansi ${nomorKwitansi} berhasil diterbitkan.`
+    });
   });
 
   // ============================================================================
@@ -3030,7 +3166,7 @@ async function startServer() {
     }>;
 
     const now = new Date();
-    const docTypes = ['QT', 'DL', 'MO', 'BT', 'INV'] as const;
+    const docTypes = ['QT', 'DL', 'MO', 'BT', 'INV', 'KWT'] as const;
     const previews: Record<string, string> = {};
 
     for (const doc of docTypes) {
