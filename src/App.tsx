@@ -542,6 +542,18 @@ export default function App() {
     showToast('Notifikasi internal berhasil dikirim.');
   };
 
+  const handleInstallWizardComplete = async (authData: { token: string; user: any; permissions: any[] }) => {
+    localStorage.setItem('mediaflow_jwt', authData.token);
+    setToken(authData.token);
+    setCurrentUser(authData.user);
+    setPermissions(authData.permissions || []);
+    setShowInstallWizard(false);
+    setLoggedOutManually(false);
+    setActiveTab('dashboard');
+    await loadAllWorkspaceData(authData.token);
+    showToast(`Selamat datang, ${authData.user.nama}! Akun Super Administrator Anda telah aktif.`);
+  };
+
   // ============================================================================
   // LOGIN SCREEN (When Logged Out)
   // ============================================================================
@@ -770,6 +782,14 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {/* VPS Initial Setup & Install Wizard Modal (Accessible on Login Screen) */}
+        {showInstallWizard && (
+          <InstallWizard
+            onClose={() => setShowInstallWizard(false)}
+            onComplete={handleInstallWizardComplete}
+          />
+        )}
       </div>
     );
   }
@@ -1485,17 +1505,7 @@ export default function App() {
       {showInstallWizard && (
         <InstallWizard
           onClose={() => setShowInstallWizard(false)}
-          onComplete={async (authData) => {
-            localStorage.setItem('mediaflow_jwt', authData.token);
-            setToken(authData.token);
-            setCurrentUser(authData.user);
-            setPermissions(authData.permissions || []);
-            setShowInstallWizard(false);
-            setLoggedOutManually(false);
-            setActiveTab('dashboard');
-            await loadAllWorkspaceData(authData.token);
-            showToast(`Selamat datang, ${authData.user.nama}! Instalasi berhasil diselesaikan.`);
-          }}
+          onComplete={handleInstallWizardComplete}
         />
       )}
     </div>
