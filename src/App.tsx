@@ -1422,6 +1422,7 @@ export default function App() {
               permissions={permissions}
               invoices={invoices}
               companySettings={settingsData?.settings || {}}
+              apiGet={apiGet}
               apiPost={apiPost}
               showToast={showToast}
               onRefresh={() => {

@@ -370,7 +370,7 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                 <div className="col-span-9 p-3.5 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl">
                   <div className="text-slate-500 text-[10px] uppercase font-mono tracking-wider mb-0.5">Terbilang:</div>
                   <div className="font-bold italic text-slate-900 text-sm md:text-base leading-relaxed">
-                    # {terbilangRupiah(Number(data.jumlah || 0))} #
+                    # {terbilangRupiah(Number(data.jumlah || data.jumlah_bayar || data.total_dibayar || 0))} #
                   </div>
                 </div>
               </div>
@@ -381,7 +381,7 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                 </div>
                 <div className="col-span-9 space-y-1.5">
                   <div className="font-bold text-slate-900 text-xs leading-relaxed">
-                    {data.untuk_pembayaran || `Pembayaran Invoice #${data.nomor_invoice || data.nomor}`}
+                    {data.untuk_pembayaran || (data.nomor_invoice ? `Pembayaran Tagihan Invoice #${data.nomor_invoice}` : `Pembayaran Invoice #${data.nomor || ''}`)}
                   </div>
                   <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 font-mono text-[11px] text-slate-600 space-y-0.5">
                     <div>
@@ -414,7 +414,7 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                         Jumlah Dana Telah Diterima (IDR)
                       </span>
                       <div className="text-2xl font-bold font-mono text-emerald-950 mt-0.5">
-                        {formatRupiah(data.jumlah)}
+                        {formatRupiah(Number(data.jumlah || data.jumlah_bayar || data.total_dibayar || 0))}
                       </div>
                     </div>
                     <div className="text-right text-[11px] font-mono text-slate-700 space-y-0.5 self-end sm:self-center border-t sm:border-t-0 sm:border-l sm:pl-4 border-emerald-200 pt-2 sm:pt-0">
