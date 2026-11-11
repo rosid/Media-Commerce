@@ -65,9 +65,16 @@ export function InstallWizard({ onComplete, onClose, isInitialSetup = false }: I
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
 
   // Step 2: DB init options
-  const [dbInitMode, setDbInitMode] = useState<'clean' | 'sample'>('sample');
+  const [dbInitMode, setDbInitMode] = useState<'clean' | 'sample'>('clean');
   const [dbInitializing, setDbInitializing] = useState<boolean>(false);
   const [dbInitializedSuccess, setDbInitializedSuccess] = useState<boolean>(false);
+
+  // Force reset dialog state
+  const [showResetDialog, setShowResetDialog] = useState<boolean>(false);
+  const [resetToken, setResetToken] = useState<string>('MediaFlowReset2026');
+  const [resetWipeData, setResetWipeData] = useState<boolean>(true);
+  const [resetting, setResetting] = useState<boolean>(false);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState<string | null>(null);
 
   // Step 3: Superadmin Form
   const [adminName, setAdminName] = useState('Administrator Utama');
@@ -151,6 +158,35 @@ export function InstallWizard({ onComplete, onClose, isInitialSetup = false }: I
       setErrorMsg(err.message || 'Gagal mengeksekusi inisialisasi database.');
     } finally {
       setDbInitializing(false);
+    }
+  };
+
+  const handleResetInstallation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setResetting(true);
+      setErrorMsg(null);
+      setResetSuccessMsg(null);
+      const res = await fetch('/api/install/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret_token: resetToken.trim(),
+          wipe_data: resetWipeData,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal mereset instalasi.');
+
+      setResetSuccessMsg(data.message || 'Instalasi berhasil direset! Wizard sekarang aktif.');
+      setShowResetDialog(false);
+      setDbInitializedSuccess(false);
+      setCurrentStep(1);
+      await fetchInstallStatus();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal mengeksekusi reset instalasi.');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -334,6 +370,23 @@ export function InstallWizard({ onComplete, onClose, isInitialSetup = false }: I
           </div>
         )}
 
+        {/* Success Alert Banner (e.g. after reset) */}
+        {resetSuccessMsg && (
+          <div className="mx-6 mt-4 p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-start gap-3 text-emerald-800 dark:text-emerald-200 text-xs">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-semibold">Sukses: </span>
+              {resetSuccessMsg}
+            </div>
+            <button
+              onClick={() => setResetSuccessMsg(null)}
+              className="text-emerald-600 hover:text-emerald-800 font-bold"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         {/* Content Body */}
         <div className="p-6 overflow-y-auto max-h-[65vh]">
           {loading ? (
@@ -343,6 +396,32 @@ export function InstallWizard({ onComplete, onClose, isInitialSetup = false }: I
             </div>
           ) : (
             <>
+              {/* Installation Locked Notice Banner */}
+              {isInstalled && (
+                <div className="mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-amber-100 dark:bg-amber-900/60 rounded-xl text-amber-700 dark:text-amber-300">
+                      <Lock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-amber-900 dark:text-amber-200 text-sm">
+                        Sistem MediaFlow ERP Telah Terinstall & Terkunci
+                      </p>
+                      <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                        Pembuatan Super Administrator baru dikunci demi keamanan produksi. Anda dapat mereset kunci instalasi jika ingin mengonfigurasi ulang atau membersihkan data demo.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetDialog(true)}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl text-xs shrink-0 transition-colors shadow-xs"
+                  >
+                    Reset Kunci Instalasi...
+                  </button>
+                </div>
+              )}
+
               {/* ================= STEP 1: ENVIRONMENT & VPS HEALTH ================= */}
               {currentStep === 1 && (
                 <div className="space-y-6">
@@ -925,6 +1004,88 @@ export function InstallWizard({ onComplete, onClose, isInitialSetup = false }: I
             </>
           )}
         </div>
+
+        {/* Force Reset Modal Dialog */}
+        {showResetDialog && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2.5 text-slate-900 dark:text-slate-100 font-bold text-sm">
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  <span>Reset Status Instalasi MediaFlow</span>
+                </div>
+                <button
+                  onClick={() => setShowResetDialog(false)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleResetInstallation} className="space-y-4 text-xs">
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Tindakan ini akan membuka kunci status instalasi sehingga Anda dapat menjalankan kembali wizard konfigurasi awal di browser ini.
+                </p>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Token Rahasia Reset (Secret Token)
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={resetToken}
+                    onChange={(e) => setResetToken(e.target.value)}
+                    placeholder="Masukkan MediaFlowReset2026 atau JWT_SECRET"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Default token bawaan: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-amber-600">MediaFlowReset2026</code> atau kunci JWT_SECRET di .env.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={resetWipeData}
+                      onChange={(e) => setResetWipeData(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Bersihkan seluruh data transaksi & dummy ke database murni (Clean Mode)</span>
+                  </label>
+                  <p className="text-[10px] text-slate-400 pl-5">
+                    Jika dicentang, tabel transaksi dan akun contoh dihapus bersih, menyisakan 7 role dan permission dasar siap produksi.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowResetDialog(false)}
+                    className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl font-semibold transition-colors"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetting || !resetToken.trim()}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-colors disabled:opacity-60 flex items-center gap-1.5 shadow-sm"
+                  >
+                    {resetting ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Mereset...</span>
+                      </>
+                    ) : (
+                      <span>Konfirmasi Reset</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

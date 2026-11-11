@@ -13,6 +13,7 @@
     "postinstall": "npm rebuild better-sqlite3",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "reset:install": "node scripts/reset-install.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

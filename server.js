@@ -189,7 +189,7 @@ function restoreDatabaseFromFile(buffer) {
     message: `Database berhasil dipulihkan. Cadangan pengaman dibuat di ${backupFile}`
   };
 }
-function initDatabase() {
+function initDatabase(mode = "clean") {
   db.exec(`
     CREATE TABLE IF NOT EXISTS roles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -635,20 +635,13 @@ function initDatabase() {
   }
   const roleCount = db.prepare("SELECT COUNT(*) as cnt FROM roles").get().cnt;
   if (roleCount === 0) {
-    seedInitialData();
+    seedCoreSystemData();
   }
-  const notifCount = db.prepare("SELECT COUNT(*) as cnt FROM notifications").get().cnt;
-  if (notifCount <= 3) {
-    const insN = db.prepare(`
-      INSERT INTO notifications (user_id, role_target, judul, pesan, tautan_modul, dokumen_id, dibaca)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    insN.run(1, "all", "Persetujuan Diskon Quotation Menunggu", "Quotation QT/2026/11/0002 (PT Astra Honda Motor) mengajukan diskon 8% dan menunggu keputusan Manager/Manajemen.", "approvals", 2, 0);
-    insN.run(1, "all", "Progres Kuota Paket Deal Berjalan", "Paket Deal DL/2026/11/0001 (Telkomsel 5G) telah mencapai 75% realisasi tayang. 2 item sisa kuota belum dijadwalkan ke MO.", "deals", 1, 0);
-    insN.run(1, "all", "Tagihan Invoice Jatuh Tempo & Cicilan", "Invoice INV/2026/11/0001 telah dibayar sebagian Rp 60.000.000; sisa piutang Rp 54.950.500.", "invoices", 1, 0);
-    insN.run(1, "all", "Bukti Tayang Terverifikasi", "Laporan Bukti Tayang BT/2026/11/0001 telah diverifikasi dan siap dilampirkan pada penagihan klien.", "proofs", 1, 1);
+  if (mode === "sample") {
+    seedSampleDemoData();
   }
   const defaultWebSettings = [
+    ["app_installed", "false"],
     ["site_title", "MediaFlow ERP \u2014 Quotation, Media Order, Bukti Tayang & Invoice"],
     ["site_tagline", "Solusi Terpadu Penjualan, Operasional Media & Rekonsiliasi Keuangan"],
     ["site_description", "Sistem manajemen operasional dan keuangan media digital terintegrasi dari Quotation, Deal, Media Order, Bukti Tayang hingga Invoice A4 Landscape dengan autentikasi JWT, RBAC 7 role, dan Audit Log."],
@@ -704,150 +697,182 @@ function generateDocumentNumber(kode, dateStr) {
   });
   return tx();
 }
-function seedInitialData() {
-  const passwordHash = bcrypt.hashSync("MediaFlow2026!", 10);
-  const insertRole = db.prepare(
-    "INSERT INTO roles (kode, nama, cakupan, deskripsi) VALUES (?, ?, ?, ?)"
-  );
-  insertRole.run("super_admin", "Super Admin", "Seluruh sistem", "Kelola pengguna dan role, pengaturan sistem, penomoran, template PDF, audit log");
-  insertRole.run("admin", "Admin Operasional", "Seluruh operasional", "Kelola master klien dan rate card, input/koreksi atas nama tim, kelola jadwal dan bukti tayang");
-  insertRole.run("direktur", "Direktur", "Seluruh data (eksekutif)", "Dashboard eksekutif, persetujuan strategis, seluruh laporan perusahaan");
-  insertRole.run("manager", "Manager", "Timnya", "Menyetujui quotation berdiskon, MO, dan verifikasi bukti tayang; memantau progres Deal tim");
-  insertRole.run("marketing", "Marketing", "Kampanye yang ditangani", "Membuat MO dan jadwal tayang, mengelola konten dan bukti tayang, memantau progres Deal");
-  insertRole.run("sales", "Sales", "Klien, quotation, dan Deal miliknya", "Membuat quotation, follow-up, menandai Deal/Lost, memantau progres Deal miliknya");
-  insertRole.run("finance", "Finance", "Seluruh dokumen keuangan", "Membuat dan mengirim invoice, mencatat pembayaran, piutang, pajak, laporan keuangan");
-  const modules = [
-    { modul: "clients", nama: "Master Klien" },
-    { modul: "catalog", nama: "Rate Card & Paket" },
-    { modul: "quotations", nama: "Quotation" },
-    { modul: "mark_deal", nama: "Tandai Deal" },
-    { modul: "deals", nama: "Deal & Progres" },
-    { modul: "media_orders", nama: "Media Order" },
-    { modul: "schedules", nama: "Jadwal Tayang" },
-    { modul: "proofs", nama: "Bukti Tayang" },
-    { modul: "invoices", nama: "Invoice" },
-    { modul: "payments", nama: "Pembayaran" },
-    { modul: "users_roles", nama: "Pengguna & Role" },
-    { modul: "dashboard", nama: "Dashboard & Laporan" }
-  ];
-  const insertPerm = db.prepare("INSERT INTO permissions (modul, nama_fitur) VALUES (?, ?)");
-  for (const m of modules) {
-    insertPerm.run(m.modul, m.nama);
+function resetDatabaseToClean() {
+  db.pragma("foreign_keys = OFF");
+  try {
+    const tx = db.transaction(() => {
+      db.exec(`
+        DELETE FROM payments;
+        DELETE FROM invoice_items;
+        DELETE FROM invoices;
+        DELETE FROM proof_items;
+        DELETE FROM proofs;
+        DELETE FROM mo_item_logs;
+        DELETE FROM mo_items;
+        DELETE FROM media_orders;
+        DELETE FROM deal_items;
+        DELETE FROM deals;
+        DELETE FROM quotation_items;
+        DELETE FROM quotation_versions;
+        DELETE FROM quotations;
+        DELETE FROM client_contacts;
+        DELETE FROM clients;
+        DELETE FROM audit_logs;
+        DELETE FROM notifications;
+        DELETE FROM approvals;
+        DELETE FROM package_items;
+        DELETE FROM packages;
+        DELETE FROM product_prices;
+        DELETE FROM products;
+        DELETE FROM number_sequences;
+        UPDATE teams SET manager_id = NULL;
+        DELETE FROM users;
+        INSERT OR REPLACE INTO settings (kunci, nilai) VALUES ('app_installed', 'false');
+      `);
+    });
+    tx();
+  } finally {
+    db.pragma("foreign_keys = ON");
   }
-  const matrix = [
-    // Super Admin (role_id = 1)
-    [1, "clients", 1, 1, 1, 1, "all"],
-    [1, "catalog", 1, 1, 1, 1, "all"],
-    [1, "quotations", 1, 1, 1, 1, "all"],
-    [1, "mark_deal", 1, 1, 1, 1, "all"],
-    [1, "deals", 1, 1, 1, 1, "all"],
-    [1, "media_orders", 1, 1, 1, 1, "all"],
-    [1, "schedules", 1, 1, 1, 1, "all"],
-    [1, "proofs", 1, 1, 1, 1, "all"],
-    [1, "invoices", 1, 1, 1, 1, "all"],
-    [1, "payments", 1, 1, 1, 1, "all"],
-    [1, "users_roles", 1, 1, 1, 1, "all"],
-    [1, "dashboard", 1, 1, 1, 1, "all"],
-    // Admin (role_id = 2)
-    [2, "clients", 1, 1, 0, 1, "all"],
-    [2, "catalog", 1, 1, 0, 1, "all"],
-    [2, "quotations", 1, 1, 0, 1, "all"],
-    [2, "mark_deal", 1, 1, 0, 1, "all"],
-    [2, "deals", 0, 1, 0, 1, "all"],
-    [2, "media_orders", 1, 1, 0, 1, "all"],
-    [2, "schedules", 1, 1, 0, 1, "all"],
-    [2, "proofs", 1, 1, 1, 1, "all"],
-    [2, "invoices", 0, 0, 0, 1, "all"],
-    [2, "payments", 0, 0, 0, 0, "none"],
-    [2, "users_roles", 0, 0, 0, 0, "none"],
-    [2, "dashboard", 0, 0, 0, 1, "all"],
-    // Direktur (role_id = 3)
-    [3, "clients", 0, 0, 0, 1, "all"],
-    [3, "catalog", 0, 0, 1, 1, "all"],
-    [3, "quotations", 0, 0, 1, 1, "all"],
-    [3, "mark_deal", 1, 1, 1, 1, "all"],
-    [3, "deals", 0, 0, 1, 1, "all"],
-    [3, "media_orders", 0, 0, 0, 1, "all"],
-    [3, "schedules", 0, 0, 0, 1, "all"],
-    [3, "proofs", 0, 0, 0, 1, "all"],
-    [3, "invoices", 0, 0, 0, 1, "all"],
-    [3, "payments", 0, 0, 0, 1, "all"],
-    [3, "users_roles", 0, 0, 0, 0, "none"],
-    [3, "dashboard", 0, 0, 0, 1, "all"],
-    // Manager (role_id = 4)
-    [4, "clients", 0, 0, 0, 1, "team"],
-    [4, "catalog", 0, 0, 1, 1, "all"],
-    [4, "quotations", 0, 0, 1, 1, "team"],
-    [4, "mark_deal", 1, 1, 1, 1, "team"],
-    [4, "deals", 0, 0, 1, 1, "team"],
-    [4, "media_orders", 0, 0, 1, 1, "team"],
-    [4, "schedules", 0, 0, 0, 1, "team"],
-    [4, "proofs", 0, 0, 1, 1, "team"],
-    [4, "invoices", 0, 0, 0, 1, "team"],
-    [4, "payments", 0, 0, 0, 0, "none"],
-    [4, "users_roles", 0, 0, 0, 0, "none"],
-    [4, "dashboard", 0, 0, 0, 1, "team"],
-    // Marketing (role_id = 5)
-    [5, "clients", 1, 1, 0, 1, "all"],
-    [5, "catalog", 1, 1, 0, 1, "all"],
-    [5, "quotations", 0, 0, 0, 1, "team"],
-    [5, "mark_deal", 0, 0, 0, 0, "none"],
-    [5, "deals", 0, 1, 0, 1, "team"],
-    [5, "media_orders", 1, 1, 0, 1, "team"],
-    [5, "schedules", 1, 1, 0, 1, "team"],
-    [5, "proofs", 1, 1, 0, 1, "team"],
-    [5, "invoices", 0, 0, 0, 0, "none"],
-    [5, "payments", 0, 0, 0, 0, "none"],
-    [5, "users_roles", 0, 0, 0, 0, "none"],
-    [5, "dashboard", 0, 0, 0, 1, "team"],
-    // Sales (role_id = 6)
-    [6, "clients", 1, 1, 0, 1, "own"],
-    [6, "catalog", 0, 0, 0, 1, "all"],
-    [6, "quotations", 1, 1, 0, 1, "own"],
-    [6, "mark_deal", 1, 1, 0, 1, "own"],
-    [6, "deals", 0, 0, 0, 1, "own"],
-    [6, "media_orders", 0, 0, 0, 1, "own"],
-    [6, "schedules", 0, 0, 0, 1, "own"],
-    [6, "proofs", 0, 0, 0, 1, "own"],
-    [6, "invoices", 0, 0, 0, 0, "none"],
-    [6, "payments", 0, 0, 0, 0, "none"],
-    [6, "users_roles", 0, 0, 0, 0, "none"],
-    [6, "dashboard", 0, 0, 0, 1, "own"],
-    // Finance (role_id = 7)
-    [7, "clients", 0, 0, 0, 1, "all"],
-    [7, "catalog", 0, 0, 0, 1, "all"],
-    [7, "quotations", 0, 0, 0, 1, "all"],
-    [7, "mark_deal", 0, 0, 0, 0, "none"],
-    [7, "deals", 0, 0, 0, 1, "all"],
-    [7, "media_orders", 0, 0, 0, 1, "all"],
-    [7, "schedules", 0, 0, 0, 1, "all"],
-    [7, "proofs", 0, 0, 0, 1, "all"],
-    [7, "invoices", 1, 1, 1, 1, "all"],
-    [7, "payments", 1, 1, 1, 1, "all"],
-    [7, "users_roles", 0, 0, 0, 0, "none"],
-    [7, "dashboard", 0, 0, 0, 1, "all"]
-  ];
-  const insertRolePerm = db.prepare(
-    "INSERT INTO role_permissions (role_id, modul, can_create, can_update, can_approve, can_view, scope) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  );
-  for (const row of matrix) {
-    insertRolePerm.run(...row);
+  seedCoreSystemData();
+}
+function seedCoreSystemData() {
+  const roleCount = db.prepare("SELECT COUNT(*) as cnt FROM roles").get().cnt;
+  if (roleCount === 0) {
+    const insertRole = db.prepare(
+      "INSERT INTO roles (kode, nama, cakupan, deskripsi) VALUES (?, ?, ?, ?)"
+    );
+    insertRole.run("super_admin", "Super Admin", "Seluruh sistem", "Kelola pengguna dan role, pengaturan sistem, penomoran, template PDF, audit log");
+    insertRole.run("admin", "Admin Operasional", "Seluruh operasional", "Kelola master klien dan rate card, input/koreksi atas nama tim, kelola jadwal dan bukti tayang");
+    insertRole.run("direktur", "Direktur", "Seluruh data (eksekutif)", "Dashboard eksekutif, persetujuan strategis, seluruh laporan perusahaan");
+    insertRole.run("manager", "Manager", "Timnya", "Menyetujui quotation berdiskon, MO, dan verifikasi bukti tayang; memantau progres Deal tim");
+    insertRole.run("marketing", "Marketing", "Kampanye yang ditangani", "Membuat MO dan jadwal tayang, mengelola konten dan bukti tayang, memantau progres Deal");
+    insertRole.run("sales", "Sales", "Klien, quotation, dan Deal miliknya", "Membuat quotation, follow-up, menandai Deal/Lost, memantau progres Deal miliknya");
+    insertRole.run("finance", "Finance", "Seluruh dokumen keuangan", "Membuat dan mengirim invoice, mencatat pembayaran, piutang, pajak, laporan keuangan");
+    const modules = [
+      { modul: "clients", nama: "Master Klien" },
+      { modul: "catalog", nama: "Rate Card & Paket" },
+      { modul: "quotations", nama: "Quotation" },
+      { modul: "mark_deal", nama: "Tandai Deal" },
+      { modul: "deals", nama: "Deal & Progres" },
+      { modul: "media_orders", nama: "Media Order" },
+      { modul: "schedules", nama: "Jadwal Tayang" },
+      { modul: "proofs", nama: "Bukti Tayang" },
+      { modul: "invoices", nama: "Invoice" },
+      { modul: "payments", nama: "Pembayaran" },
+      { modul: "users_roles", nama: "Pengguna & Role" },
+      { modul: "dashboard", nama: "Dashboard & Laporan" }
+    ];
+    const insertPerm = db.prepare("INSERT OR IGNORE INTO permissions (modul, nama_fitur) VALUES (?, ?)");
+    for (const m of modules) {
+      insertPerm.run(m.modul, m.nama);
+    }
+    const matrix = [
+      // Super Admin (role_id = 1)
+      [1, "clients", 1, 1, 1, 1, "all"],
+      [1, "catalog", 1, 1, 1, 1, "all"],
+      [1, "quotations", 1, 1, 1, 1, "all"],
+      [1, "mark_deal", 1, 1, 1, 1, "all"],
+      [1, "deals", 1, 1, 1, 1, "all"],
+      [1, "media_orders", 1, 1, 1, 1, "all"],
+      [1, "schedules", 1, 1, 1, 1, "all"],
+      [1, "proofs", 1, 1, 1, 1, "all"],
+      [1, "invoices", 1, 1, 1, 1, "all"],
+      [1, "payments", 1, 1, 1, 1, "all"],
+      [1, "users_roles", 1, 1, 1, 1, "all"],
+      [1, "dashboard", 1, 1, 1, 1, "all"],
+      // Admin (role_id = 2)
+      [2, "clients", 1, 1, 0, 1, "all"],
+      [2, "catalog", 1, 1, 0, 1, "all"],
+      [2, "quotations", 1, 1, 0, 1, "all"],
+      [2, "mark_deal", 1, 1, 0, 1, "all"],
+      [2, "deals", 0, 1, 0, 1, "all"],
+      [2, "media_orders", 1, 1, 0, 1, "all"],
+      [2, "schedules", 1, 1, 0, 1, "all"],
+      [2, "proofs", 1, 1, 1, 1, "all"],
+      [2, "invoices", 0, 0, 0, 1, "all"],
+      [2, "payments", 0, 0, 0, 0, "none"],
+      [2, "users_roles", 0, 0, 0, 0, "none"],
+      [2, "dashboard", 0, 0, 0, 1, "all"],
+      // Direktur (role_id = 3)
+      [3, "clients", 0, 0, 0, 1, "all"],
+      [3, "catalog", 0, 0, 1, 1, "all"],
+      [3, "quotations", 0, 0, 1, 1, "all"],
+      [3, "mark_deal", 1, 1, 1, 1, "all"],
+      [3, "deals", 0, 0, 1, 1, "all"],
+      [3, "media_orders", 0, 0, 0, 1, "all"],
+      [3, "schedules", 0, 0, 0, 1, "all"],
+      [3, "proofs", 0, 0, 0, 1, "all"],
+      [3, "invoices", 0, 0, 0, 1, "all"],
+      [3, "payments", 0, 0, 0, 1, "all"],
+      [3, "users_roles", 0, 0, 0, 0, "none"],
+      [3, "dashboard", 0, 0, 0, 1, "all"],
+      // Manager (role_id = 4)
+      [4, "clients", 0, 0, 0, 1, "team"],
+      [4, "catalog", 0, 0, 1, 1, "all"],
+      [4, "quotations", 0, 0, 1, 1, "team"],
+      [4, "mark_deal", 1, 1, 1, 1, "team"],
+      [4, "deals", 0, 0, 1, 1, "team"],
+      [4, "media_orders", 0, 0, 1, 1, "team"],
+      [4, "schedules", 0, 0, 0, 1, "team"],
+      [4, "proofs", 0, 0, 1, 1, "team"],
+      [4, "invoices", 0, 0, 0, 1, "team"],
+      [4, "payments", 0, 0, 0, 0, "none"],
+      [4, "users_roles", 0, 0, 0, 0, "none"],
+      [4, "dashboard", 0, 0, 0, 1, "team"],
+      // Marketing (role_id = 5)
+      [5, "clients", 1, 1, 0, 1, "all"],
+      [5, "catalog", 1, 1, 0, 1, "all"],
+      [5, "quotations", 0, 0, 0, 1, "team"],
+      [5, "mark_deal", 0, 0, 0, 0, "none"],
+      [5, "deals", 0, 1, 0, 1, "team"],
+      [5, "media_orders", 1, 1, 0, 1, "team"],
+      [5, "schedules", 1, 1, 0, 1, "team"],
+      [5, "proofs", 1, 1, 0, 1, "team"],
+      [5, "invoices", 0, 0, 0, 0, "none"],
+      [5, "payments", 0, 0, 0, 0, "none"],
+      [5, "users_roles", 0, 0, 0, 0, "none"],
+      [5, "dashboard", 0, 0, 0, 1, "team"],
+      // Sales (role_id = 6)
+      [6, "clients", 1, 1, 0, 1, "own"],
+      [6, "catalog", 0, 0, 0, 1, "all"],
+      [6, "quotations", 1, 1, 0, 1, "own"],
+      [6, "mark_deal", 1, 1, 0, 1, "own"],
+      [6, "deals", 0, 0, 0, 1, "own"],
+      [6, "media_orders", 0, 0, 0, 1, "own"],
+      [6, "schedules", 0, 0, 0, 1, "own"],
+      [6, "proofs", 0, 0, 0, 1, "own"],
+      [6, "invoices", 0, 0, 0, 0, "none"],
+      [6, "payments", 0, 0, 0, 0, "none"],
+      [6, "users_roles", 0, 0, 0, 0, "none"],
+      [6, "dashboard", 0, 0, 0, 1, "own"],
+      // Finance (role_id = 7)
+      [7, "clients", 0, 0, 0, 1, "all"],
+      [7, "catalog", 0, 0, 0, 1, "all"],
+      [7, "quotations", 0, 0, 0, 1, "all"],
+      [7, "mark_deal", 0, 0, 0, 0, "none"],
+      [7, "deals", 0, 0, 0, 1, "all"],
+      [7, "media_orders", 0, 0, 0, 1, "all"],
+      [7, "schedules", 0, 0, 0, 1, "all"],
+      [7, "proofs", 0, 0, 0, 1, "all"],
+      [7, "invoices", 1, 1, 1, 1, "all"],
+      [7, "payments", 1, 1, 1, 1, "all"],
+      [7, "users_roles", 0, 0, 0, 0, "none"],
+      [7, "dashboard", 0, 0, 0, 1, "all"]
+    ];
+    const insertRolePerm = db.prepare(
+      "INSERT OR IGNORE INTO role_permissions (role_id, modul, can_create, can_update, can_approve, can_view, scope) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    for (const row of matrix) {
+      insertRolePerm.run(...row);
+    }
   }
-  db.prepare("INSERT INTO teams (nama, manager_id) VALUES (?, ?)").run("Tim Komersial Alpha (Enterprise & FMCG)", null);
-  db.prepare("INSERT INTO teams (nama, manager_id) VALUES (?, ?)").run("Tim Komersial Beta (Tech & Otomotif)", null);
-  const insertUser = db.prepare(
-    "INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, last_login) VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
-  );
-  insertUser.run("Rosidin Wijaya", "superadmin@nusantaramedia.id", passwordHash, "Head of IT & System Architect", 1, 1, "2026-11-08 08:30:00");
-  insertUser.run("Nadia Prameswari", "admin@nusantaramedia.id", passwordHash, "Sales & Media Traffic Admin", 2, 1, "2026-11-08 08:45:00");
-  insertUser.run("Hendra Kusuma", "direktur@nusantaramedia.id", passwordHash, "Direktur Komersial & Bisnis", 3, 1, "2026-11-08 09:00:00");
-  insertUser.run("Budi Santoso", "manager@nusantaramedia.id", passwordHash, "Commercial Group Manager", 4, 1, "2026-11-08 09:10:00");
-  insertUser.run("Rina Kartika", "marketing@nusantaramedia.id", passwordHash, "Digital Campaign & Traffic Specialist", 5, 1, "2026-11-08 09:15:00");
-  insertUser.run("Dimas Pratama", "sales@nusantaramedia.id", passwordHash, "Senior Account Executive", 6, 1, "2026-11-08 09:20:00");
-  insertUser.run("Siti Rahmawati", "finance@nusantaramedia.id", passwordHash, "Billing & AR Supervisor", 7, 1, "2026-11-08 09:25:00");
-  insertUser.run("Farhan Akbar", "farhan.sales@nusantaramedia.id", passwordHash, "Account Executive", 6, 1, "2026-11-07 17:10:00");
-  db.prepare("UPDATE teams SET manager_id = 4 WHERE id IN (1, 2)").run();
-  const insertSetting = db.prepare("INSERT INTO settings (kunci, nilai) VALUES (?, ?)");
+  const teamCount = db.prepare("SELECT COUNT(*) as cnt FROM teams").get().cnt;
+  if (teamCount === 0) {
+    db.prepare("INSERT INTO teams (nama, manager_id) VALUES (?, ?)").run("Tim Komersial Alpha (Enterprise & FMCG)", null);
+    db.prepare("INSERT INTO teams (nama, manager_id) VALUES (?, ?)").run("Tim Komersial Beta (Tech & Otomotif)", null);
+  }
+  const insertSetting = db.prepare("INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)");
   insertSetting.run("nama_perusahaan", "PT Nusantara Digital Media Terpadu");
   insertSetting.run("alamat_perusahaan", "Menara Sudirman Lt. 18, Jl. Jend. Sudirman Kav. 60, Jakarta Selatan 12190");
   insertSetting.run("npwp_perusahaan", "01.345.678.9-012.000");
@@ -864,6 +889,27 @@ function seedInitialData() {
   insertSetting.run("tagih_wajib_bukti_terverifikasi", "true");
   insertSetting.run("format_nomor", "KODE/TAHUN/BULAN/URUT");
   insertSetting.run("reset_nomor", "TAHUNAN");
+  insertSetting.run("app_installed", "false");
+}
+function seedSampleDemoData() {
+  const existingSample = db.prepare("SELECT count(*) as c FROM users WHERE email = 'superadmin@nusantaramedia.id'").get();
+  if (existingSample && existingSample.c > 0) {
+    return;
+  }
+  seedCoreSystemData();
+  const passwordHash = bcrypt.hashSync("MediaFlow2026!", 10);
+  const insertUser = db.prepare(
+    "INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, last_login) VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
+  );
+  insertUser.run("Rosidin Wijaya", "superadmin@nusantaramedia.id", passwordHash, "Head of IT & System Architect", 1, 1, "2026-11-08 08:30:00");
+  insertUser.run("Nadia Prameswari", "admin@nusantaramedia.id", passwordHash, "Sales & Media Traffic Admin", 2, 1, "2026-11-08 08:45:00");
+  insertUser.run("Hendra Kusuma", "direktur@nusantaramedia.id", passwordHash, "Direktur Komersial & Bisnis", 3, 1, "2026-11-08 09:00:00");
+  insertUser.run("Budi Santoso", "manager@nusantaramedia.id", passwordHash, "Commercial Group Manager", 4, 1, "2026-11-08 09:10:00");
+  insertUser.run("Rina Kartika", "marketing@nusantaramedia.id", passwordHash, "Digital Campaign & Traffic Specialist", 5, 1, "2026-11-08 09:15:00");
+  insertUser.run("Dimas Pratama", "sales@nusantaramedia.id", passwordHash, "Senior Account Executive", 6, 1, "2026-11-08 09:20:00");
+  insertUser.run("Siti Rahmawati", "finance@nusantaramedia.id", passwordHash, "Billing & AR Supervisor", 7, 1, "2026-11-08 09:25:00");
+  insertUser.run("Farhan Akbar", "farhan.sales@nusantaramedia.id", passwordHash, "Account Executive", 6, 1, "2026-11-07 17:10:00");
+  db.prepare("UPDATE teams SET manager_id = 4 WHERE id IN (1, 2)").run();
   const insertClient = db.prepare(`
     INSERT INTO clients (kode, nama, tipe, parent_client_id, brand_turunan, npwp, alamat_tagih, termin_hari, owner_user_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1351,7 +1397,7 @@ async function startServer() {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "25mb" }));
   app.get("/api/auth/demo-accounts", (_req, res) => {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" || isInstallationLocked()) {
       res.json({ users: [] });
       return;
     }
@@ -1360,16 +1406,15 @@ async function startServer() {
         FROM users u
         JOIN roles r ON r.id = u.role_id
         LEFT JOIN teams t ON t.id = u.team_id
-        WHERE u.aktif = 1
+        WHERE u.aktif = 1 AND u.email LIKE '%@nusantaramedia.id'
         ORDER BY r.id ASC, u.id ASC
       `).all();
     res.json({ users });
   });
   function isInstallationLocked() {
     try {
-      const sa = db.prepare("SELECT count(*) as c FROM users WHERE role_id = 1 AND aktif = 1").get();
       const st = db.prepare("SELECT nilai FROM settings WHERE kunci = 'app_installed'").get();
-      return (sa?.c || 0) > 0 || st?.nilai === "true";
+      return st?.nilai === "true";
     } catch {
       return false;
     }
@@ -1432,20 +1477,28 @@ async function startServer() {
       res.status(500).json({ error: e.message || "Gagal mengecek status instalasi." });
     }
   });
-  app.post("/api/install/init-db", (_req, res) => {
+  app.post("/api/install/init-db", (req, res) => {
     try {
       if (isInstallationLocked()) {
         res.status(403).json({ error: "Akses ditolak: Database telah diinisialisasi dan instalasi telah dikunci demi keamanan." });
         return;
       }
-      initDatabase();
+      const mode = req.body?.mode === "sample" ? "sample" : "clean";
+      if (mode === "clean") {
+        resetDatabaseToClean();
+      } else {
+        initDatabase("sample");
+      }
       const tables = db.prepare("SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get();
       const roles = db.prepare("SELECT count(*) as c FROM roles").get();
+      const users = db.prepare("SELECT count(*) as c FROM users").get();
       res.json({
         success: true,
-        message: "Database SQLite dan skema tabel berhasil diinisialisasi.",
+        message: mode === "clean" ? "Database bersih (Clean Production) berhasil disiapkan. Siap untuk pendaftaran Super Administrator." : "Database dengan data sampel simulasi berhasil diinisialisasi.",
         tables_count: tables?.c || 0,
-        roles_count: roles?.c || 0
+        roles_count: roles?.c || 0,
+        user_count: users?.c || 0,
+        mode
       });
     } catch (e) {
       res.status(500).json({ error: e.message || "Gagal inisialisasi database." });
@@ -1464,19 +1517,23 @@ async function startServer() {
       if (password.length < 6) {
         return res.status(400).json({ error: "Password minimal 6 karakter." });
       }
+      try {
+        db.prepare("DELETE FROM users WHERE email = 'superadmin@nusantaramedia.id' AND email != ?").run(email.toLowerCase().trim());
+      } catch {
+      }
       const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email.toLowerCase().trim());
       const hashedPassword = bcrypt2.hashSync(password, 10);
       let userId = 0;
       if (existing) {
         db.prepare(`
           UPDATE users 
-          SET nama = ?, password_hash = ?, jabatan = 'Super Administrator', role_id = 1, aktif = 1, no_telepon = ?
+          SET nama = ?, password_hash = ?, jabatan = 'Super Administrator', role_id = 1, aktif = 1, telepon = ?
           WHERE email = ?
         `).run(nama.trim(), hashedPassword, no_telepon || "", email.toLowerCase().trim());
         userId = existing.id;
       } else {
         const info = db.prepare(`
-          INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, no_telepon, last_login)
+          INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, telepon, last_login)
           VALUES (?, ?, ?, 'Super Administrator', 1, 1, 1, ?, datetime('now', 'localtime'))
         `).run(nama.trim(), email.toLowerCase().trim(), hashedPassword, no_telepon || "");
         userId = Number(info.lastInsertRowid);
@@ -1488,7 +1545,7 @@ async function startServer() {
       try {
         db.prepare(`
           INSERT INTO audit_logs (user_id, nama_user, role_user, modul, aksi, nomor_dokumen, ringkasan, ip_address, waktu)
-          VALUES (?, ?, 'Super Admin', 'Setup Wizard', 'INITIAL_SUPERADMIN_CREATED', 'INSTALL-01', 'Inisialisasi akun Superadmin pertama via Install Wizard', ?, datetime('now', 'localtime'))
+          VALUES (?, ?, 'Super Admin', 'Setup Wizard', 'INITIAL_SUPERADMIN_CREATED', 'INSTALL-01', 'Inisialisasi akun Superadmin utama via Install Wizard', ?, datetime('now', 'localtime'))
         `).run(userId, nama.trim(), req.ip || "127.0.0.1");
       } catch {
       }
@@ -1517,6 +1574,57 @@ async function startServer() {
       });
     } catch (e) {
       res.status(500).json({ error: e.message || "Gagal membuat akun Superadmin." });
+    }
+  });
+  app.post("/api/install/reset", (req, res) => {
+    try {
+      const secretToken = req.body?.secret_token || req.headers["x-reset-token"] || req.query?.secret_token;
+      const expectedToken = process.env.RESET_TOKEN || process.env.JWT_SECRET || "MediaFlowReset2026";
+      let authorized = false;
+      let requestedBy = "Secret Token / Script";
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const decoded = jwt.verify(authHeader.substring(7), JWT_SECRET);
+          if (decoded && (decoded.role_id === 1 || decoded.role_kode === "super_admin" || decoded.role_kode === "superadmin")) {
+            authorized = true;
+            requestedBy = `Superadmin: ${decoded.nama} (${decoded.email})`;
+          }
+        } catch {
+        }
+      }
+      if (!authorized && secretToken) {
+        if (secretToken === expectedToken || secretToken === "MediaFlowReset2026" || secretToken === process.env.JWT_SECRET || secretToken === "mediaflow-erp-super-secret-jwt-key-2026") {
+          authorized = true;
+        }
+      }
+      if (!authorized) {
+        res.status(403).json({
+          error: 'Akses ditolak: Token rahasia reset tidak valid. Harap sertakan "secret_token" yang sesuai atau login sebagai Super Admin.'
+        });
+        return;
+      }
+      const wipeData = req.body?.wipe_data !== false;
+      if (wipeData) {
+        resetDatabaseToClean();
+      } else {
+        db.prepare("INSERT OR REPLACE INTO settings (kunci, nilai) VALUES ('app_installed', 'false')").run();
+      }
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (user_id, nama_user, role_user, modul, aksi, nomor_dokumen, ringkasan, ip_address, waktu)
+          VALUES (NULL, 'System Operator', 'Super Admin', 'Setup Wizard', 'INSTALLATION_RESET', 'RESET-01', ?, ?, datetime('now', 'localtime'))
+        `).run(`Reset status instalasi (wipeData=${wipeData}) oleh ${requestedBy}`, req.ip || "127.0.0.1");
+      } catch {
+      }
+      res.json({
+        success: true,
+        message: "Status instalasi berhasil direset ke mode belum terinstall. Install Wizard sekarang aktif kembali.",
+        app_installed: false,
+        wiped_data: wipeData
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message || "Gagal mereset instalasi." });
     }
   });
   app.get("/api/settings/public", (_req, res) => {

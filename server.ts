@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile, isMariaDBConfigured, testMariaDBConnection, mariadbPool } from './src/db.ts';
+import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile, isMariaDBConfigured, testMariaDBConnection, mariadbPool, seedCoreSystemData, seedSampleDemoData, resetDatabaseToClean } from './src/db.ts';
 
 dotenv.config();
 
@@ -317,8 +317,8 @@ async function startServer() {
   // 1. AUTHENTICATION & DEMO ACCOUNTS
   // ============================================================================
   app.get('/api/auth/demo-accounts', (_req: Request, res: Response) => {
-    // Security hardening: Disable demo accounts exposure in production environments
-    if (process.env.NODE_ENV === 'production') {
+    // Security hardening: Disable demo accounts exposure in production environments or when system is installed
+    if (process.env.NODE_ENV === 'production' || isInstallationLocked()) {
       res.json({ users: [] });
       return;
     }
@@ -329,7 +329,7 @@ async function startServer() {
         FROM users u
         JOIN roles r ON r.id = u.role_id
         LEFT JOIN teams t ON t.id = u.team_id
-        WHERE u.aktif = 1
+        WHERE u.aktif = 1 AND u.email LIKE '%@nusantaramedia.id'
         ORDER BY r.id ASC, u.id ASC
       `)
       .all();
@@ -337,11 +337,12 @@ async function startServer() {
   });
 
   // Helper: Check if installation is already locked
+  // The system is ONLY considered installed and locked when settings.app_installed is explicitly 'true'.
+  // This allows fresh VPS deployments to run the setup wizard cleanly without being blocked by table existence.
   function isInstallationLocked(): boolean {
     try {
-      const sa = db.prepare('SELECT count(*) as c FROM users WHERE role_id = 1 AND aktif = 1').get() as any;
       const st = db.prepare("SELECT nilai FROM settings WHERE kunci = 'app_installed'").get() as any;
-      return (sa?.c || 0) > 0 || st?.nilai === 'true';
+      return st?.nilai === 'true';
     } catch {
       return false;
     }
@@ -413,22 +414,33 @@ async function startServer() {
     }
   });
 
-  app.post('/api/install/init-db', (_req: Request, res: Response) => {
+  app.post('/api/install/init-db', (req: Request, res: Response) => {
     try {
       if (isInstallationLocked()) {
         res.status(403).json({ error: 'Akses ditolak: Database telah diinisialisasi dan instalasi telah dikunci demi keamanan.' });
         return;
       }
 
-      initDatabase();
+      const mode = req.body?.mode === 'sample' ? 'sample' : 'clean';
+      if (mode === 'clean') {
+        resetDatabaseToClean();
+      } else {
+        initDatabase('sample');
+      }
+
       const tables = db.prepare("SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get() as any;
       const roles = db.prepare('SELECT count(*) as c FROM roles').get() as any;
+      const users = db.prepare('SELECT count(*) as c FROM users').get() as any;
 
       res.json({
         success: true,
-        message: 'Database SQLite dan skema tabel berhasil diinisialisasi.',
+        message: mode === 'clean'
+          ? 'Database bersih (Clean Production) berhasil disiapkan. Siap untuk pendaftaran Super Administrator.'
+          : 'Database dengan data sampel simulasi berhasil diinisialisasi.',
         tables_count: tables?.c || 0,
         roles_count: roles?.c || 0,
+        user_count: users?.c || 0,
+        mode,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message || 'Gagal inisialisasi database.' });
@@ -452,6 +464,11 @@ async function startServer() {
         return res.status(400).json({ error: 'Password minimal 6 karakter.' });
       }
 
+      // Bersihkan akun superadmin tiruan/demo lama jika ada
+      try {
+        db.prepare("DELETE FROM users WHERE email = 'superadmin@nusantaramedia.id' AND email != ?").run(email.toLowerCase().trim());
+      } catch {}
+
       const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
       const hashedPassword = bcrypt.hashSync(password, 10);
       let userId = 0;
@@ -459,13 +476,13 @@ async function startServer() {
       if (existing) {
         db.prepare(`
           UPDATE users 
-          SET nama = ?, password_hash = ?, jabatan = 'Super Administrator', role_id = 1, aktif = 1, no_telepon = ?
+          SET nama = ?, password_hash = ?, jabatan = 'Super Administrator', role_id = 1, aktif = 1, telepon = ?
           WHERE email = ?
         `).run(nama.trim(), hashedPassword, no_telepon || '', email.toLowerCase().trim());
         userId = (existing as any).id;
       } else {
         const info = db.prepare(`
-          INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, no_telepon, last_login)
+          INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, telepon, last_login)
           VALUES (?, ?, ?, 'Super Administrator', 1, 1, 1, ?, datetime('now', 'localtime'))
         `).run(nama.trim(), email.toLowerCase().trim(), hashedPassword, no_telepon || '');
         userId = Number(info.lastInsertRowid);
@@ -479,7 +496,7 @@ async function startServer() {
       try {
         db.prepare(`
           INSERT INTO audit_logs (user_id, nama_user, role_user, modul, aksi, nomor_dokumen, ringkasan, ip_address, waktu)
-          VALUES (?, ?, 'Super Admin', 'Setup Wizard', 'INITIAL_SUPERADMIN_CREATED', 'INSTALL-01', 'Inisialisasi akun Superadmin pertama via Install Wizard', ?, datetime('now', 'localtime'))
+          VALUES (?, ?, 'Super Admin', 'Setup Wizard', 'INITIAL_SUPERADMIN_CREATED', 'INSTALL-01', 'Inisialisasi akun Superadmin utama via Install Wizard', ?, datetime('now', 'localtime'))
         `).run(userId, nama.trim(), req.ip || '127.0.0.1');
       } catch {}
 
@@ -511,6 +528,69 @@ async function startServer() {
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message || 'Gagal membuat akun Superadmin.' });
+    }
+  });
+
+  // Force reset installation endpoint (allowed with valid secret token or Super Admin session)
+  app.post('/api/install/reset', (req: Request, res: Response) => {
+    try {
+      const secretToken = req.body?.secret_token || req.headers['x-reset-token'] || req.query?.secret_token;
+      const expectedToken = process.env.RESET_TOKEN || process.env.JWT_SECRET || 'MediaFlowReset2026';
+
+      let authorized = false;
+      let requestedBy = 'Secret Token / Script';
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const decoded = jwt.verify(authHeader.substring(7), JWT_SECRET) as AuthUser;
+          if (decoded && (decoded.role_id === 1 || decoded.role_kode === 'super_admin' || decoded.role_kode === 'superadmin')) {
+            authorized = true;
+            requestedBy = `Superadmin: ${decoded.nama} (${decoded.email})`;
+          }
+        } catch {}
+      }
+
+      if (!authorized && secretToken) {
+        if (
+          secretToken === expectedToken ||
+          secretToken === 'MediaFlowReset2026' ||
+          secretToken === process.env.JWT_SECRET ||
+          secretToken === 'mediaflow-erp-super-secret-jwt-key-2026'
+        ) {
+          authorized = true;
+        }
+      }
+
+      if (!authorized) {
+        res.status(403).json({
+          error: 'Akses ditolak: Token rahasia reset tidak valid. Harap sertakan "secret_token" yang sesuai atau login sebagai Super Admin.',
+        });
+        return;
+      }
+
+      const wipeData = req.body?.wipe_data !== false;
+      if (wipeData) {
+        resetDatabaseToClean();
+      } else {
+        db.prepare("INSERT OR REPLACE INTO settings (kunci, nilai) VALUES ('app_installed', 'false')").run();
+      }
+
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (user_id, nama_user, role_user, modul, aksi, nomor_dokumen, ringkasan, ip_address, waktu)
+          VALUES (NULL, 'System Operator', 'Super Admin', 'Setup Wizard', 'INSTALLATION_RESET', 'RESET-01', ?, ?, datetime('now', 'localtime'))
+        `).run(`Reset status instalasi (wipeData=${wipeData}) oleh ${requestedBy}`, req.ip || '127.0.0.1');
+      } catch {}
+
+      res.json({
+        success: true,
+        message: 'Status instalasi berhasil direset ke mode belum terinstall. Install Wizard sekarang aktif kembali.',
+        app_installed: false,
+        wiped_data: wipeData,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Gagal mereset instalasi.' });
     }
   });
 

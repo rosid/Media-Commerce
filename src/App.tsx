@@ -101,8 +101,8 @@ export default function App() {
   const [loggedOutManually, setLoggedOutManually] = useState<boolean>(false);
 
   // Login Form State
-  const [loginEmail, setLoginEmail] = useState('superadmin@nusantaramedia.id');
-  const [loginPassword, setLoginPassword] = useState('MediaFlow2026!');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
 
   // Install Wizard State
@@ -342,6 +342,18 @@ export default function App() {
   useEffect(() => {
     fetchPublicSettings();
   }, [fetchPublicSettings]);
+
+  // Check if system is uninstalled; auto-open Install Wizard for first-time VPS setup
+  useEffect(() => {
+    fetch('/api/install/status')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.installed === false) {
+          setShowInstallWizard(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Synchronize Document Head with Web & SEO Settings
   useEffect(() => {

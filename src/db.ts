@@ -213,7 +213,7 @@ export function restoreDatabaseFromFile(buffer: Buffer): { success: boolean; bac
   };
 }
 
-export function initDatabase() {
+export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
   db.exec(`
     CREATE TABLE IF NOT EXISTS roles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -670,24 +670,16 @@ export function initDatabase() {
 
   const roleCount = (db.prepare('SELECT COUNT(*) as cnt FROM roles').get() as { cnt: number }).cnt;
   if (roleCount === 0) {
-    seedInitialData();
+    seedCoreSystemData();
   }
 
-  // Ensure comprehensive notifications exist across roles
-  const notifCount = (db.prepare('SELECT COUNT(*) as cnt FROM notifications').get() as { cnt: number }).cnt;
-  if (notifCount <= 3) {
-    const insN = db.prepare(`
-      INSERT INTO notifications (user_id, role_target, judul, pesan, tautan_modul, dokumen_id, dibaca)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    insN.run(1, 'all', 'Persetujuan Diskon Quotation Menunggu', 'Quotation QT/2026/11/0002 (PT Astra Honda Motor) mengajukan diskon 8% dan menunggu keputusan Manager/Manajemen.', 'approvals', 2, 0);
-    insN.run(1, 'all', 'Progres Kuota Paket Deal Berjalan', 'Paket Deal DL/2026/11/0001 (Telkomsel 5G) telah mencapai 75% realisasi tayang. 2 item sisa kuota belum dijadwalkan ke MO.', 'deals', 1, 0);
-    insN.run(1, 'all', 'Tagihan Invoice Jatuh Tempo & Cicilan', 'Invoice INV/2026/11/0001 telah dibayar sebagian Rp 60.000.000; sisa piutang Rp 54.950.500.', 'invoices', 1, 0);
-    insN.run(1, 'all', 'Bukti Tayang Terverifikasi', 'Laporan Bukti Tayang BT/2026/11/0001 telah diverifikasi dan siap dilampirkan pada penagihan klien.', 'proofs', 1, 1);
+  if (mode === 'sample') {
+    seedSampleDemoData();
   }
 
   // Ensure default Web App Master Settings, SEO Indexing, Cloudflare Turnstile & Security settings exist
   const defaultWebSettings: Array<[string, string]> = [
+    ['app_installed', 'false'],
     ['site_title', 'MediaFlow ERP — Quotation, Media Order, Bukti Tayang & Invoice'],
     ['site_tagline', 'Solusi Terpadu Penjualan, Operasional Media & Rekonsiliasi Keuangan'],
     ['site_description', 'Sistem manajemen operasional dan keuangan media digital terintegrasi dari Quotation, Deal, Media Order, Bukti Tayang hingga Invoice A4 Landscape dengan autentikasi JWT, RBAC 7 role, dan Audit Log.'],
@@ -748,154 +740,250 @@ export function generateDocumentNumber(kode: 'QT' | 'DL' | 'MO' | 'BT' | 'INV', 
   return tx();
 }
 
-function seedInitialData() {
+/**
+ * Resets the operational database to a clean, production-ready state:
+ * - Deletes all business transactions (quotations, deals, media orders, invoices, payments, proofs, approvals, audit logs, notifications)
+ * - Deletes all sample clients, products, packages, and mock user accounts
+ * - Resets document sequence counters
+ * - Preserves core roles, permissions, teams, and master company settings
+ * - Explicitly sets settings.app_installed = 'false'
+ */
+export function resetDatabaseToClean(): void {
+  db.pragma('foreign_keys = OFF');
+  try {
+    const tx = db.transaction(() => {
+      db.exec(`
+        DELETE FROM payments;
+        DELETE FROM invoice_items;
+        DELETE FROM invoices;
+        DELETE FROM proof_items;
+        DELETE FROM proofs;
+        DELETE FROM mo_item_logs;
+        DELETE FROM mo_items;
+        DELETE FROM media_orders;
+        DELETE FROM deal_items;
+        DELETE FROM deals;
+        DELETE FROM quotation_items;
+        DELETE FROM quotation_versions;
+        DELETE FROM quotations;
+        DELETE FROM client_contacts;
+        DELETE FROM clients;
+        DELETE FROM audit_logs;
+        DELETE FROM notifications;
+        DELETE FROM approvals;
+        DELETE FROM package_items;
+        DELETE FROM packages;
+        DELETE FROM product_prices;
+        DELETE FROM products;
+        DELETE FROM number_sequences;
+        UPDATE teams SET manager_id = NULL;
+        DELETE FROM users;
+        INSERT OR REPLACE INTO settings (kunci, nilai) VALUES ('app_installed', 'false');
+      `);
+    });
+    tx();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  // Ensure core roles, permissions, and teams exist
+  seedCoreSystemData();
+}
+
+/**
+ * Seeds purely essential system definitions:
+ * - 7 Core RBAC Roles
+ * - Permission Matrix
+ * - Default Teams
+ * - Master Company Settings
+ * DOES NOT CREATE ANY DUMMY USERS OR BUSINESS TRANSACTIONS.
+ */
+export function seedCoreSystemData() {
+  const roleCount = (db.prepare('SELECT COUNT(*) as cnt FROM roles').get() as { cnt: number }).cnt;
+  if (roleCount === 0) {
+    // 1. Insert 7 Roles
+    const insertRole = db.prepare(
+      'INSERT INTO roles (kode, nama, cakupan, deskripsi) VALUES (?, ?, ?, ?)'
+    );
+    insertRole.run('super_admin', 'Super Admin', 'Seluruh sistem', 'Kelola pengguna dan role, pengaturan sistem, penomoran, template PDF, audit log');
+    insertRole.run('admin', 'Admin Operasional', 'Seluruh operasional', 'Kelola master klien dan rate card, input/koreksi atas nama tim, kelola jadwal dan bukti tayang');
+    insertRole.run('direktur', 'Direktur', 'Seluruh data (eksekutif)', 'Dashboard eksekutif, persetujuan strategis, seluruh laporan perusahaan');
+    insertRole.run('manager', 'Manager', 'Timnya', 'Menyetujui quotation berdiskon, MO, dan verifikasi bukti tayang; memantau progres Deal tim');
+    insertRole.run('marketing', 'Marketing', 'Kampanye yang ditangani', 'Membuat MO dan jadwal tayang, mengelola konten dan bukti tayang, memantau progres Deal');
+    insertRole.run('sales', 'Sales', 'Klien, quotation, dan Deal miliknya', 'Membuat quotation, follow-up, menandai Deal/Lost, memantau progres Deal miliknya');
+    insertRole.run('finance', 'Finance', 'Seluruh dokumen keuangan', 'Membuat dan mengirim invoice, mencatat pembayaran, piutang, pajak, laporan keuangan');
+
+    // 2. Insert Permissions Matrix according to Section 3 Table
+    const modules = [
+      { modul: 'clients', nama: 'Master Klien' },
+      { modul: 'catalog', nama: 'Rate Card & Paket' },
+      { modul: 'quotations', nama: 'Quotation' },
+      { modul: 'mark_deal', nama: 'Tandai Deal' },
+      { modul: 'deals', nama: 'Deal & Progres' },
+      { modul: 'media_orders', nama: 'Media Order' },
+      { modul: 'schedules', nama: 'Jadwal Tayang' },
+      { modul: 'proofs', nama: 'Bukti Tayang' },
+      { modul: 'invoices', nama: 'Invoice' },
+      { modul: 'payments', nama: 'Pembayaran' },
+      { modul: 'users_roles', nama: 'Pengguna & Role' },
+      { modul: 'dashboard', nama: 'Dashboard & Laporan' },
+    ];
+
+    const insertPerm = db.prepare('INSERT OR IGNORE INTO permissions (modul, nama_fitur) VALUES (?, ?)');
+    for (const m of modules) {
+      insertPerm.run(m.modul, m.nama);
+    }
+
+    // Matrix definition: [role_id, modul, B, U, A, L, scope]
+    const matrix: Array<[number, string, number, number, number, number, string]> = [
+      // Super Admin (role_id = 1)
+      [1, 'clients', 1, 1, 1, 1, 'all'],
+      [1, 'catalog', 1, 1, 1, 1, 'all'],
+      [1, 'quotations', 1, 1, 1, 1, 'all'],
+      [1, 'mark_deal', 1, 1, 1, 1, 'all'],
+      [1, 'deals', 1, 1, 1, 1, 'all'],
+      [1, 'media_orders', 1, 1, 1, 1, 'all'],
+      [1, 'schedules', 1, 1, 1, 1, 'all'],
+      [1, 'proofs', 1, 1, 1, 1, 'all'],
+      [1, 'invoices', 1, 1, 1, 1, 'all'],
+      [1, 'payments', 1, 1, 1, 1, 'all'],
+      [1, 'users_roles', 1, 1, 1, 1, 'all'],
+      [1, 'dashboard', 1, 1, 1, 1, 'all'],
+
+      // Admin (role_id = 2)
+      [2, 'clients', 1, 1, 0, 1, 'all'],
+      [2, 'catalog', 1, 1, 0, 1, 'all'],
+      [2, 'quotations', 1, 1, 0, 1, 'all'],
+      [2, 'mark_deal', 1, 1, 0, 1, 'all'],
+      [2, 'deals', 0, 1, 0, 1, 'all'],
+      [2, 'media_orders', 1, 1, 0, 1, 'all'],
+      [2, 'schedules', 1, 1, 0, 1, 'all'],
+      [2, 'proofs', 1, 1, 1, 1, 'all'],
+      [2, 'invoices', 0, 0, 0, 1, 'all'],
+      [2, 'payments', 0, 0, 0, 0, 'none'],
+      [2, 'users_roles', 0, 0, 0, 0, 'none'],
+      [2, 'dashboard', 0, 0, 0, 1, 'all'],
+
+      // Direktur (role_id = 3)
+      [3, 'clients', 0, 0, 0, 1, 'all'],
+      [3, 'catalog', 0, 0, 1, 1, 'all'],
+      [3, 'quotations', 0, 0, 1, 1, 'all'],
+      [3, 'mark_deal', 1, 1, 1, 1, 'all'],
+      [3, 'deals', 0, 0, 1, 1, 'all'],
+      [3, 'media_orders', 0, 0, 0, 1, 'all'],
+      [3, 'schedules', 0, 0, 0, 1, 'all'],
+      [3, 'proofs', 0, 0, 0, 1, 'all'],
+      [3, 'invoices', 0, 0, 0, 1, 'all'],
+      [3, 'payments', 0, 0, 0, 1, 'all'],
+      [3, 'users_roles', 0, 0, 0, 0, 'none'],
+      [3, 'dashboard', 0, 0, 0, 1, 'all'],
+
+      // Manager (role_id = 4)
+      [4, 'clients', 0, 0, 0, 1, 'team'],
+      [4, 'catalog', 0, 0, 1, 1, 'all'],
+      [4, 'quotations', 0, 0, 1, 1, 'team'],
+      [4, 'mark_deal', 1, 1, 1, 1, 'team'],
+      [4, 'deals', 0, 0, 1, 1, 'team'],
+      [4, 'media_orders', 0, 0, 1, 1, 'team'],
+      [4, 'schedules', 0, 0, 0, 1, 'team'],
+      [4, 'proofs', 0, 0, 1, 1, 'team'],
+      [4, 'invoices', 0, 0, 0, 1, 'team'],
+      [4, 'payments', 0, 0, 0, 0, 'none'],
+      [4, 'users_roles', 0, 0, 0, 0, 'none'],
+      [4, 'dashboard', 0, 0, 0, 1, 'team'],
+
+      // Marketing (role_id = 5)
+      [5, 'clients', 1, 1, 0, 1, 'all'],
+      [5, 'catalog', 1, 1, 0, 1, 'all'],
+      [5, 'quotations', 0, 0, 0, 1, 'team'],
+      [5, 'mark_deal', 0, 0, 0, 0, 'none'],
+      [5, 'deals', 0, 1, 0, 1, 'team'],
+      [5, 'media_orders', 1, 1, 0, 1, 'team'],
+      [5, 'schedules', 1, 1, 0, 1, 'team'],
+      [5, 'proofs', 1, 1, 0, 1, 'team'],
+      [5, 'invoices', 0, 0, 0, 0, 'none'],
+      [5, 'payments', 0, 0, 0, 0, 'none'],
+      [5, 'users_roles', 0, 0, 0, 0, 'none'],
+      [5, 'dashboard', 0, 0, 0, 1, 'team'],
+
+      // Sales (role_id = 6)
+      [6, 'clients', 1, 1, 0, 1, 'own'],
+      [6, 'catalog', 0, 0, 0, 1, 'all'],
+      [6, 'quotations', 1, 1, 0, 1, 'own'],
+      [6, 'mark_deal', 1, 1, 0, 1, 'own'],
+      [6, 'deals', 0, 0, 0, 1, 'own'],
+      [6, 'media_orders', 0, 0, 0, 1, 'own'],
+      [6, 'schedules', 0, 0, 0, 1, 'own'],
+      [6, 'proofs', 0, 0, 0, 1, 'own'],
+      [6, 'invoices', 0, 0, 0, 0, 'none'],
+      [6, 'payments', 0, 0, 0, 0, 'none'],
+      [6, 'users_roles', 0, 0, 0, 0, 'none'],
+      [6, 'dashboard', 0, 0, 0, 1, 'own'],
+
+      // Finance (role_id = 7)
+      [7, 'clients', 0, 0, 0, 1, 'all'],
+      [7, 'catalog', 0, 0, 0, 1, 'all'],
+      [7, 'quotations', 0, 0, 0, 1, 'all'],
+      [7, 'mark_deal', 0, 0, 0, 0, 'none'],
+      [7, 'deals', 0, 0, 0, 1, 'all'],
+      [7, 'media_orders', 0, 0, 0, 1, 'all'],
+      [7, 'schedules', 0, 0, 0, 1, 'all'],
+      [7, 'proofs', 0, 0, 0, 1, 'all'],
+      [7, 'invoices', 1, 1, 1, 1, 'all'],
+      [7, 'payments', 1, 1, 1, 1, 'all'],
+      [7, 'users_roles', 0, 0, 0, 0, 'none'],
+      [7, 'dashboard', 0, 0, 0, 1, 'all'],
+    ];
+
+    const insertRolePerm = db.prepare(
+      'INSERT OR IGNORE INTO role_permissions (role_id, modul, can_create, can_update, can_approve, can_view, scope) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    for (const row of matrix) {
+      insertRolePerm.run(...row);
+    }
+  }
+
+  // Ensure Teams
+  const teamCount = (db.prepare('SELECT COUNT(*) as cnt FROM teams').get() as { cnt: number }).cnt;
+  if (teamCount === 0) {
+    db.prepare('INSERT INTO teams (nama, manager_id) VALUES (?, ?)').run('Tim Komersial Alpha (Enterprise & FMCG)', null);
+    db.prepare('INSERT INTO teams (nama, manager_id) VALUES (?, ?)').run('Tim Komersial Beta (Tech & Otomotif)', null);
+  }
+
+  // Ensure Master Settings
+  const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)');
+  insertSetting.run('nama_perusahaan', 'PT Nusantara Digital Media Terpadu');
+  insertSetting.run('alamat_perusahaan', 'Menara Sudirman Lt. 18, Jl. Jend. Sudirman Kav. 60, Jakarta Selatan 12190');
+  insertSetting.run('npwp_perusahaan', '01.345.678.9-012.000');
+  insertSetting.run('email_perusahaan', 'billing@nusantaramedia.id');
+  insertSetting.run('telepon_perusahaan', '(021) 520-8899');
+  insertSetting.run('bank_nama', 'Bank Mandiri KCP Sudirman Jakarta');
+  insertSetting.run('bank_rekening', '122-00-9876543-2');
+  insertSetting.run('bank_atas_nama', 'PT Nusantara Digital Media Terpadu');
+  insertSetting.run('ppn_default', '11');
+  insertSetting.run('pph23_default', '2');
+  insertSetting.run('meterai_default', '10000');
+  insertSetting.run('aturan_diskon_approval', 'all_discounts_require_manager');
+  insertSetting.run('mo_wajib_approval_manager', 'true');
+  insertSetting.run('tagih_wajib_bukti_terverifikasi', 'true');
+  insertSetting.run('format_nomor', 'KODE/TAHUN/BULAN/URUT');
+  insertSetting.run('reset_nomor', 'TAHUNAN');
+  insertSetting.run('app_installed', 'false');
+}
+
+/**
+ * Seeds sample/demo data for evaluation and testing purposes only.
+ */
+export function seedSampleDemoData() {
+  const existingSample = db.prepare("SELECT count(*) as c FROM users WHERE email = 'superadmin@nusantaramedia.id'").get() as any;
+  if (existingSample && existingSample.c > 0) {
+    return; // Already seeded
+  }
+
+  seedCoreSystemData();
   const passwordHash = bcrypt.hashSync('MediaFlow2026!', 10);
 
-  // 1. Insert 7 Roles
-  const insertRole = db.prepare(
-    'INSERT INTO roles (kode, nama, cakupan, deskripsi) VALUES (?, ?, ?, ?)'
-  );
-  insertRole.run('super_admin', 'Super Admin', 'Seluruh sistem', 'Kelola pengguna dan role, pengaturan sistem, penomoran, template PDF, audit log');
-  insertRole.run('admin', 'Admin Operasional', 'Seluruh operasional', 'Kelola master klien dan rate card, input/koreksi atas nama tim, kelola jadwal dan bukti tayang');
-  insertRole.run('direktur', 'Direktur', 'Seluruh data (eksekutif)', 'Dashboard eksekutif, persetujuan strategis, seluruh laporan perusahaan');
-  insertRole.run('manager', 'Manager', 'Timnya', 'Menyetujui quotation berdiskon, MO, dan verifikasi bukti tayang; memantau progres Deal tim');
-  insertRole.run('marketing', 'Marketing', 'Kampanye yang ditangani', 'Membuat MO dan jadwal tayang, mengelola konten dan bukti tayang, memantau progres Deal');
-  insertRole.run('sales', 'Sales', 'Klien, quotation, dan Deal miliknya', 'Membuat quotation, follow-up, menandai Deal/Lost, memantau progres Deal miliknya');
-  insertRole.run('finance', 'Finance', 'Seluruh dokumen keuangan', 'Membuat dan mengirim invoice, mencatat pembayaran, piutang, pajak, laporan keuangan');
-
-  // 2. Insert Permissions Matrix according to Section 3 Table
-  const modules = [
-    { modul: 'clients', nama: 'Master Klien' },
-    { modul: 'catalog', nama: 'Rate Card & Paket' },
-    { modul: 'quotations', nama: 'Quotation' },
-    { modul: 'mark_deal', nama: 'Tandai Deal' },
-    { modul: 'deals', nama: 'Deal & Progres' },
-    { modul: 'media_orders', nama: 'Media Order' },
-    { modul: 'schedules', nama: 'Jadwal Tayang' },
-    { modul: 'proofs', nama: 'Bukti Tayang' },
-    { modul: 'invoices', nama: 'Invoice' },
-    { modul: 'payments', nama: 'Pembayaran' },
-    { modul: 'users_roles', nama: 'Pengguna & Role' },
-    { modul: 'dashboard', nama: 'Dashboard & Laporan' },
-  ];
-
-  const insertPerm = db.prepare('INSERT INTO permissions (modul, nama_fitur) VALUES (?, ?)');
-  for (const m of modules) {
-    insertPerm.run(m.modul, m.nama);
-  }
-
-  // Matrix definition: [role_id, modul, B, U, A, L, scope]
-  const matrix: Array<[number, string, number, number, number, number, string]> = [
-    // Super Admin (role_id = 1)
-    [1, 'clients', 1, 1, 1, 1, 'all'],
-    [1, 'catalog', 1, 1, 1, 1, 'all'],
-    [1, 'quotations', 1, 1, 1, 1, 'all'],
-    [1, 'mark_deal', 1, 1, 1, 1, 'all'],
-    [1, 'deals', 1, 1, 1, 1, 'all'],
-    [1, 'media_orders', 1, 1, 1, 1, 'all'],
-    [1, 'schedules', 1, 1, 1, 1, 'all'],
-    [1, 'proofs', 1, 1, 1, 1, 'all'],
-    [1, 'invoices', 1, 1, 1, 1, 'all'],
-    [1, 'payments', 1, 1, 1, 1, 'all'],
-    [1, 'users_roles', 1, 1, 1, 1, 'all'],
-    [1, 'dashboard', 1, 1, 1, 1, 'all'],
-
-    // Admin (role_id = 2)
-    [2, 'clients', 1, 1, 0, 1, 'all'],
-    [2, 'catalog', 1, 1, 0, 1, 'all'],
-    [2, 'quotations', 1, 1, 0, 1, 'all'],
-    [2, 'mark_deal', 1, 1, 0, 1, 'all'],
-    [2, 'deals', 0, 1, 0, 1, 'all'],
-    [2, 'media_orders', 1, 1, 0, 1, 'all'],
-    [2, 'schedules', 1, 1, 0, 1, 'all'],
-    [2, 'proofs', 1, 1, 1, 1, 'all'],
-    [2, 'invoices', 0, 0, 0, 1, 'all'],
-    [2, 'payments', 0, 0, 0, 0, 'none'],
-    [2, 'users_roles', 0, 0, 0, 0, 'none'],
-    [2, 'dashboard', 0, 0, 0, 1, 'all'],
-
-    // Direktur (role_id = 3)
-    [3, 'clients', 0, 0, 0, 1, 'all'],
-    [3, 'catalog', 0, 0, 1, 1, 'all'],
-    [3, 'quotations', 0, 0, 1, 1, 'all'],
-    [3, 'mark_deal', 1, 1, 1, 1, 'all'],
-    [3, 'deals', 0, 0, 1, 1, 'all'],
-    [3, 'media_orders', 0, 0, 0, 1, 'all'],
-    [3, 'schedules', 0, 0, 0, 1, 'all'],
-    [3, 'proofs', 0, 0, 0, 1, 'all'],
-    [3, 'invoices', 0, 0, 0, 1, 'all'],
-    [3, 'payments', 0, 0, 0, 1, 'all'],
-    [3, 'users_roles', 0, 0, 0, 0, 'none'],
-    [3, 'dashboard', 0, 0, 0, 1, 'all'],
-
-    // Manager (role_id = 4)
-    [4, 'clients', 0, 0, 0, 1, 'team'],
-    [4, 'catalog', 0, 0, 1, 1, 'all'],
-    [4, 'quotations', 0, 0, 1, 1, 'team'],
-    [4, 'mark_deal', 1, 1, 1, 1, 'team'],
-    [4, 'deals', 0, 0, 1, 1, 'team'],
-    [4, 'media_orders', 0, 0, 1, 1, 'team'],
-    [4, 'schedules', 0, 0, 0, 1, 'team'],
-    [4, 'proofs', 0, 0, 1, 1, 'team'],
-    [4, 'invoices', 0, 0, 0, 1, 'team'],
-    [4, 'payments', 0, 0, 0, 0, 'none'],
-    [4, 'users_roles', 0, 0, 0, 0, 'none'],
-    [4, 'dashboard', 0, 0, 0, 1, 'team'],
-
-    // Marketing (role_id = 5)
-    [5, 'clients', 1, 1, 0, 1, 'all'],
-    [5, 'catalog', 1, 1, 0, 1, 'all'],
-    [5, 'quotations', 0, 0, 0, 1, 'team'],
-    [5, 'mark_deal', 0, 0, 0, 0, 'none'],
-    [5, 'deals', 0, 1, 0, 1, 'team'],
-    [5, 'media_orders', 1, 1, 0, 1, 'team'],
-    [5, 'schedules', 1, 1, 0, 1, 'team'],
-    [5, 'proofs', 1, 1, 0, 1, 'team'],
-    [5, 'invoices', 0, 0, 0, 0, 'none'],
-    [5, 'payments', 0, 0, 0, 0, 'none'],
-    [5, 'users_roles', 0, 0, 0, 0, 'none'],
-    [5, 'dashboard', 0, 0, 0, 1, 'team'],
-
-    // Sales (role_id = 6)
-    [6, 'clients', 1, 1, 0, 1, 'own'],
-    [6, 'catalog', 0, 0, 0, 1, 'all'],
-    [6, 'quotations', 1, 1, 0, 1, 'own'],
-    [6, 'mark_deal', 1, 1, 0, 1, 'own'],
-    [6, 'deals', 0, 0, 0, 1, 'own'],
-    [6, 'media_orders', 0, 0, 0, 1, 'own'],
-    [6, 'schedules', 0, 0, 0, 1, 'own'],
-    [6, 'proofs', 0, 0, 0, 1, 'own'],
-    [6, 'invoices', 0, 0, 0, 0, 'none'],
-    [6, 'payments', 0, 0, 0, 0, 'none'],
-    [6, 'users_roles', 0, 0, 0, 0, 'none'],
-    [6, 'dashboard', 0, 0, 0, 1, 'own'],
-
-    // Finance (role_id = 7)
-    [7, 'clients', 0, 0, 0, 1, 'all'],
-    [7, 'catalog', 0, 0, 0, 1, 'all'],
-    [7, 'quotations', 0, 0, 0, 1, 'all'],
-    [7, 'mark_deal', 0, 0, 0, 0, 'none'],
-    [7, 'deals', 0, 0, 0, 1, 'all'],
-    [7, 'media_orders', 0, 0, 0, 1, 'all'],
-    [7, 'schedules', 0, 0, 0, 1, 'all'],
-    [7, 'proofs', 0, 0, 0, 1, 'all'],
-    [7, 'invoices', 1, 1, 1, 1, 'all'],
-    [7, 'payments', 1, 1, 1, 1, 'all'],
-    [7, 'users_roles', 0, 0, 0, 0, 'none'],
-    [7, 'dashboard', 0, 0, 0, 1, 'all'],
-  ];
-
-  const insertRolePerm = db.prepare(
-    'INSERT INTO role_permissions (role_id, modul, can_create, can_update, can_approve, can_view, scope) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  );
-  for (const row of matrix) {
-    insertRolePerm.run(...row);
-  }
-
-  // 3. Teams & Users
-  db.prepare('INSERT INTO teams (nama, manager_id) VALUES (?, ?)').run('Tim Komersial Alpha (Enterprise & FMCG)', null);
-  db.prepare('INSERT INTO teams (nama, manager_id) VALUES (?, ?)').run('Tim Komersial Beta (Tech & Otomotif)', null);
-
+  // 1. Insert 8 Demo Users
   const insertUser = db.prepare(
     'INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif, last_login) VALUES (?, ?, ?, ?, ?, ?, 1, ?)'
   );
@@ -920,26 +1008,7 @@ function seedInitialData() {
 
   db.prepare('UPDATE teams SET manager_id = 4 WHERE id IN (1, 2)').run();
 
-  // 4. Company Settings
-  const insertSetting = db.prepare('INSERT INTO settings (kunci, nilai) VALUES (?, ?)');
-  insertSetting.run('nama_perusahaan', 'PT Nusantara Digital Media Terpadu');
-  insertSetting.run('alamat_perusahaan', 'Menara Sudirman Lt. 18, Jl. Jend. Sudirman Kav. 60, Jakarta Selatan 12190');
-  insertSetting.run('npwp_perusahaan', '01.345.678.9-012.000');
-  insertSetting.run('email_perusahaan', 'billing@nusantaramedia.id');
-  insertSetting.run('telepon_perusahaan', '(021) 520-8899');
-  insertSetting.run('bank_nama', 'Bank Mandiri KCP Sudirman Jakarta');
-  insertSetting.run('bank_rekening', '122-00-9876543-2');
-  insertSetting.run('bank_atas_nama', 'PT Nusantara Digital Media Terpadu');
-  insertSetting.run('ppn_default', '11');
-  insertSetting.run('pph23_default', '2');
-  insertSetting.run('meterai_default', '10000');
-  insertSetting.run('aturan_diskon_approval', 'all_discounts_require_manager');
-  insertSetting.run('mo_wajib_approval_manager', 'true');
-  insertSetting.run('tagih_wajib_bukti_terverifikasi', 'true');
-  insertSetting.run('format_nomor', 'KODE/TAHUN/BULAN/URUT');
-  insertSetting.run('reset_nomor', 'TAHUNAN');
-
-  // 5. Master Clients & Contacts
+  // 2. Master Clients & Contacts
   const insertClient = db.prepare(`
     INSERT INTO clients (kode, nama, tipe, parent_client_id, brand_turunan, npwp, alamat_tagih, termin_hari, owner_user_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
