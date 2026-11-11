@@ -1274,6 +1274,11 @@ function authenticateJWT(req, res, next) {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    const currentUserId = decoded.userId || decoded.id || decoded.sub;
+    if (!currentUserId) {
+      res.status(401).json({ error: "Token otentikasi tidak valid (identitas pengguna tidak ditemukan)." });
+      return;
+    }
     const user = db.prepare(`
         SELECT u.id, u.nama, u.email, u.jabatan, u.telepon, u.departemen, u.bio, u.avatar_url,
                u.preferensi_tema, u.notif_email, u.notif_approval, u.notif_jadwal, u.notif_invoice,
@@ -1284,7 +1289,7 @@ function authenticateJWT(req, res, next) {
         JOIN roles r ON r.id = u.role_id
         LEFT JOIN teams t ON t.id = u.team_id
         WHERE u.id = ?
-      `).get(decoded.userId);
+      `).get(currentUserId);
     if (!user || !user.aktif) {
       res.status(401).json({ error: "Pengguna tidak ditemukan atau tidak aktif." });
       return;
@@ -1560,11 +1565,11 @@ async function startServer() {
         email: email.toLowerCase().trim(),
         jabatan: "Super Administrator",
         role_id: 1,
-        role_kode: "superadmin",
+        role_kode: "super_admin",
         role_nama: "Super Admin",
         team_id: 1
       };
-      const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: "7d" });
+      const token = jwt.sign({ ...userPayload, userId }, JWT_SECRET, { expiresIn: "7d" });
       res.json({
         success: true,
         message: "Akun Superadmin berhasil dibuat dan instalasi selesai.",
@@ -3444,18 +3449,125 @@ async function startServer() {
   });
   app.post("/api/settings/users", authenticateJWT, (req, res) => {
     const user = req.user;
-    if (user.role_kode !== "super_admin") {
-      res.status(403).json({ error: "Hanya Super Admin yang dapat menambahkan pengguna baru." });
+    if (user.role_kode !== "super_admin" && user.role_id !== 1) {
+      res.status(403).json({ error: "Hanya Super Admin yang berwenang menambahkan pengguna baru." });
       return;
     }
     const { nama, email, password, jabatan, role_id, team_id } = req.body;
-    const hash = bcrypt2.hashSync(password || "MediaFlow2026!", 10);
+    if (!nama || !email) {
+      res.status(400).json({ error: "Nama lengkap dan email login wajib diisi." });
+      return;
+    }
+    const cleanEmail = String(email).toLowerCase().trim();
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(cleanEmail);
+    if (existing) {
+      res.status(400).json({ error: `Email "${cleanEmail}" sudah terdaftar pada pengguna lain.` });
+      return;
+    }
+    const finalPassword = password && String(password).trim().length >= 6 ? String(password).trim() : password && String(password).trim().length > 0 ? null : "MediaFlow2026!";
+    if (finalPassword === null) {
+      res.status(400).json({ error: "Kata sandi minimal harus 6 karakter." });
+      return;
+    }
+    const hash = bcrypt2.hashSync(finalPassword, 10);
     const r = db.prepare(`
         INSERT INTO users (nama, email, password_hash, jabatan, role_id, team_id, aktif)
         VALUES (?, ?, ?, ?, ?, ?, 1)
-      `).run(nama, email, hash, jabatan, Number(role_id), team_id ? Number(team_id) : 1);
-    logAudit(user, "Pengguna & Role", "CREATE_USER", email, `Menambahkan akun pengguna baru: ${nama} (${email})`, null, { nama, email, jabatan, role_id });
-    res.json({ id: Number(r.lastInsertRowid) });
+      `).run(String(nama).trim(), cleanEmail, hash, jabatan ? String(jabatan).trim() : "Staff Operasional", Number(role_id) || 6, team_id ? Number(team_id) : 1);
+    const newUserId = Number(r.lastInsertRowid);
+    logAudit(
+      user,
+      "Pengguna & Role",
+      "CREATE_USER",
+      cleanEmail,
+      `Menambahkan akun pengguna baru: ${nama} (${cleanEmail}) dengan Role ID ${role_id}`,
+      null,
+      { nama, email: cleanEmail, jabatan, role_id }
+    );
+    res.json({
+      id: newUserId,
+      nama: String(nama).trim(),
+      email: cleanEmail,
+      temporary_password: finalPassword,
+      message: "Pengguna baru berhasil dibuat."
+    });
+  });
+  app.put("/api/settings/users/:id/password", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_kode !== "super_admin" && user.role_id !== 1) {
+      res.status(403).json({ error: "Hanya Super Admin yang berwenang mengatur ulang kata sandi pengguna." });
+      return;
+    }
+    const targetUserId = Number(req.params.id);
+    const { password_baru } = req.body;
+    if (!password_baru || String(password_baru).trim().length < 6) {
+      res.status(400).json({ error: "Kata sandi baru minimal harus 6 karakter." });
+      return;
+    }
+    const targetUser = db.prepare("SELECT id, nama, email FROM users WHERE id = ?").get(targetUserId);
+    if (!targetUser) {
+      res.status(404).json({ error: "Pengguna tidak ditemukan dalam sistem." });
+      return;
+    }
+    const newPassStr = String(password_baru).trim();
+    const hash = bcrypt2.hashSync(newPassStr, 10);
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, targetUserId);
+    logAudit(
+      user,
+      "Pengguna & Role",
+      "RESET_USER_PASSWORD",
+      targetUser.email,
+      `Super Admin (${user.nama}) mereset kata sandi akun ${targetUser.nama} (${targetUser.email})`,
+      null,
+      { target_user_id: targetUserId, email: targetUser.email }
+    );
+    pushNotification(
+      targetUserId,
+      null,
+      "Kata Sandi Akun Diperbarui Administrator",
+      `Kata sandi akun Anda telah diperbarui oleh Super Administrator. Silakan hubungi admin jika ini bukan permintaan Anda.`,
+      "account",
+      null
+    );
+    res.json({
+      success: true,
+      message: `Kata sandi untuk pengguna ${targetUser.nama} (${targetUser.email}) berhasil diperbarui.`,
+      user_id: targetUserId,
+      new_password: newPassStr
+    });
+  });
+  app.put("/api/settings/users/:id/toggle-status", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_kode !== "super_admin" && user.role_id !== 1) {
+      res.status(403).json({ error: "Hanya Super Admin yang berwenang mengubah status akun pengguna." });
+      return;
+    }
+    const targetUserId = Number(req.params.id);
+    if (targetUserId === user.id) {
+      res.status(400).json({ error: "Anda tidak dapat menonaktifkan akun Anda sendiri yang sedang aktif." });
+      return;
+    }
+    const targetUser = db.prepare("SELECT id, nama, email, aktif FROM users WHERE id = ?").get(targetUserId);
+    if (!targetUser) {
+      res.status(404).json({ error: "Pengguna tidak ditemukan." });
+      return;
+    }
+    const newStatus = targetUser.aktif === 1 ? 0 : 1;
+    db.prepare("UPDATE users SET aktif = ? WHERE id = ?").run(newStatus, targetUserId);
+    logAudit(
+      user,
+      "Pengguna & Role",
+      "TOGGLE_USER_STATUS",
+      targetUser.email,
+      `Super Admin mengubah status akun ${targetUser.nama} (${targetUser.email}) menjadi ${newStatus === 1 ? "Aktif" : "Nonaktif"}`,
+      { aktif: targetUser.aktif },
+      { aktif: newStatus }
+    );
+    res.json({
+      success: true,
+      aktif: newStatus,
+      message: `Status akun ${targetUser.nama} berhasil diubah menjadi ${newStatus === 1 ? "Aktif" : "Nonaktif"}.`
+    });
   });
   app.put("/api/settings/company", authenticateJWT, (req, res) => {
     const user = req.user;
