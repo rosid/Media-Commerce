@@ -665,35 +665,114 @@ function initDatabase(mode = "clean") {
     ["app_footer_text", "\xA9 2026 MediaFlow ERP. Hak Cipta Dilindungi \xB7 Siap Dijalankan di Server VPS"],
     ["app_timezone", "Asia/Jakarta (WIB)"],
     ["app_canonical_url", "https://erp.nusantaramedia.id"],
-    ["google_site_verification", "google-site-verification=mf_vps_auth_token_sample_2026"]
+    ["google_site_verification", "google-site-verification=mf_vps_auth_token_sample_2026"],
+    ["seq_format_global", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_digits", "4"],
+    ["seq_reset_period", "TAHUNAN"],
+    ["seq_code_QT", "QT"],
+    ["seq_code_DL", "DL"],
+    ["seq_code_MO", "MO"],
+    ["seq_code_BT", "BT"],
+    ["seq_code_INV", "INV"],
+    ["seq_format_QT", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_format_DL", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_format_MO", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_format_BT", "{KODE}/{TAHUN}/{BULAN}/{URUT}"],
+    ["seq_format_INV", "{KODE}/{TAHUN}/{BULAN}/{URUT}"]
   ];
   const insWebSetting = db.prepare("INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)");
   for (const [k, v] of defaultWebSettings) {
     insWebSetting.run(k, v);
   }
 }
+var ROMAN_MONTHS = {
+  1: "I",
+  2: "II",
+  3: "III",
+  4: "IV",
+  5: "V",
+  6: "VI",
+  7: "VII",
+  8: "VIII",
+  9: "IX",
+  10: "X",
+  11: "XI",
+  12: "XII"
+};
+function getSequenceConfig() {
+  const rows = db.prepare(`SELECT kunci, nilai FROM settings WHERE kunci LIKE 'seq_%' OR kunci IN ('format_nomor', 'reset_nomor')`).all();
+  const map = {};
+  for (const r of rows) {
+    map[r.kunci] = r.nilai;
+  }
+  const global_format = map.seq_format_global || map.format_nomor || "{KODE}/{TAHUN}/{BULAN}/{URUT}";
+  const digits = Math.min(Math.max(Number(map.seq_digits) || 4, 3), 8);
+  const reset_period = (map.seq_reset_period || map.reset_nomor || "TAHUNAN").toUpperCase();
+  const defaultCodes = {
+    QT: "QT",
+    DL: "DL",
+    MO: "MO",
+    BT: "BT",
+    INV: "INV"
+  };
+  const codes = {
+    QT: map.seq_code_QT || defaultCodes.QT,
+    DL: map.seq_code_DL || defaultCodes.DL,
+    MO: map.seq_code_MO || defaultCodes.MO,
+    BT: map.seq_code_BT || defaultCodes.BT,
+    INV: map.seq_code_INV || defaultCodes.INV
+  };
+  const formats = {
+    QT: map.seq_format_QT || global_format,
+    DL: map.seq_format_DL || global_format,
+    MO: map.seq_format_MO || global_format,
+    BT: map.seq_format_BT || global_format,
+    INV: map.seq_format_INV || global_format
+  };
+  return { global_format, formats, codes, digits, reset_period };
+}
+function formatSequenceNumber(formatTemplate, docCode, date, seqNumber, digits = 4) {
+  const year4 = String(date.getFullYear());
+  const year2 = year4.slice(-2);
+  const monthNum = date.getMonth() + 1;
+  const month2 = String(monthNum).padStart(2, "0");
+  const day2 = String(date.getDate()).padStart(2, "0");
+  const romanMonth = ROMAN_MONTHS[monthNum] || month2;
+  const paddedSeq = String(seqNumber).padStart(digits, "0");
+  return formatTemplate.replace(/{KODE}/g, docCode).replace(/{TAHUN}/g, year4).replace(/{TH}/g, year2).replace(/{BULAN}/g, month2).replace(/{ROMAN}/g, romanMonth).replace(/{HARI}/g, day2).replace(/{URUT}/g, paddedSeq);
+}
 function generateDocumentNumber(kode, dateStr) {
-  const now = dateStr ? new Date(dateStr) : /* @__PURE__ */ new Date("2026-11-08T10:00:00Z");
-  const tahun = now.getFullYear();
-  const bulan = String(now.getMonth() + 1).padStart(2, "0");
+  const now = dateStr ? new Date(dateStr) : /* @__PURE__ */ new Date();
+  const validDate = isNaN(now.getTime()) ? /* @__PURE__ */ new Date() : now;
+  const config = getSequenceConfig();
+  const docCode = config.codes[kode] || kode;
+  const template = config.formats[kode] || config.global_format;
+  const year = validDate.getFullYear();
+  const month = validDate.getMonth() + 1;
+  let seqTahunKey = year;
+  if (config.reset_period === "BULANAN") {
+    seqTahunKey = year * 100 + month;
+  } else if (config.reset_period === "BERKELANJUTAN") {
+    seqTahunKey = 0;
+  }
   const tx = db.transaction(() => {
-    const existing = db.prepare("SELECT last_seq FROM number_sequences WHERE kode_dokumen = ? AND tahun = ?").get(kode, tahun);
+    const existing = db.prepare("SELECT last_seq FROM number_sequences WHERE kode_dokumen = ? AND tahun = ?").get(kode, seqTahunKey);
     let nextSeq = 1;
     if (existing) {
       nextSeq = existing.last_seq + 1;
       db.prepare("UPDATE number_sequences SET last_seq = ? WHERE kode_dokumen = ? AND tahun = ?").run(
         nextSeq,
         kode,
-        tahun
+        seqTahunKey
       );
     } else {
       db.prepare("INSERT INTO number_sequences (kode_dokumen, tahun, last_seq) VALUES (?, ?, ?)").run(
         kode,
-        tahun,
+        seqTahunKey,
         nextSeq
       );
     }
-    return `${kode}/${tahun}/${bulan}/${String(nextSeq).padStart(4, "0")}`;
+    return formatSequenceNumber(template, docCode, validDate, nextSeq, config.digits);
   });
   return tx();
 }
@@ -3567,6 +3646,116 @@ async function startServer() {
       success: true,
       aktif: newStatus,
       message: `Status akun ${targetUser.nama} berhasil diubah menjadi ${newStatus === 1 ? "Aktif" : "Nonaktif"}.`
+    });
+  });
+  app.get("/api/settings/sequences", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_id !== 1 && user.role_kode !== "super_admin" && user.role_kode !== "superadmin" && user.role_kode !== "admin") {
+      res.status(403).json({ error: "Tidak memiliki izin mengakses pengaturan nomor dokumen." });
+      return;
+    }
+    const config = getSequenceConfig();
+    const counters = db.prepare("SELECT * FROM number_sequences ORDER BY tahun DESC, kode_dokumen ASC").all();
+    const now = /* @__PURE__ */ new Date();
+    const docTypes = ["QT", "DL", "MO", "BT", "INV"];
+    const previews = {};
+    for (const doc of docTypes) {
+      const docCode = config.codes[doc] || doc;
+      const template = config.formats[doc] || config.global_format;
+      let seqTahunKey = now.getFullYear();
+      if (config.reset_period === "BULANAN") {
+        seqTahunKey = now.getFullYear() * 100 + (now.getMonth() + 1);
+      } else if (config.reset_period === "BERKELANJUTAN") {
+        seqTahunKey = 0;
+      }
+      const matchCounter = counters.find((c) => c.kode_dokumen === doc && c.tahun === seqTahunKey);
+      const nextSeq = (matchCounter ? matchCounter.last_seq : 0) + 1;
+      previews[doc] = formatSequenceNumber(template, docCode, now, nextSeq, config.digits);
+    }
+    res.json({
+      config,
+      counters,
+      previews
+    });
+  });
+  app.put("/api/settings/sequences/format", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_id !== 1 && user.role_kode !== "super_admin" && user.role_kode !== "superadmin") {
+      res.status(403).json({ error: "Hanya Super Admin yang berwenang mengubah konfigurasi format penomoran dokumen." });
+      return;
+    }
+    const { global_format, digits, reset_period, codes, formats } = req.body;
+    if (!global_format || typeof global_format !== "string") {
+      res.status(400).json({ error: "Format penomoran global wajib diisi." });
+      return;
+    }
+    const stmt = db.prepare("INSERT OR REPLACE INTO settings (kunci, nilai) VALUES (?, ?)");
+    db.transaction(() => {
+      stmt.run("seq_format_global", global_format.trim());
+      stmt.run("format_nomor", global_format.trim());
+      if (digits) {
+        stmt.run("seq_digits", String(Math.min(Math.max(Number(digits) || 4, 3), 8)));
+      }
+      if (reset_period) {
+        const periodStr = String(reset_period).toUpperCase();
+        stmt.run("seq_reset_period", periodStr);
+        stmt.run("reset_nomor", periodStr);
+      }
+      if (codes && typeof codes === "object") {
+        for (const [k, v] of Object.entries(codes)) {
+          if (v) stmt.run(`seq_code_${k}`, String(v).trim().toUpperCase());
+        }
+      }
+      if (formats && typeof formats === "object") {
+        for (const [k, v] of Object.entries(formats)) {
+          if (v) stmt.run(`seq_format_${k}`, String(v).trim());
+        }
+      }
+    })();
+    logAudit(
+      user,
+      "Pengaturan Penomoran Dokumen",
+      "UPDATE_SEQUENCE_FORMAT",
+      null,
+      `Super Admin (${user.nama}) memperbarui format penomoran dokumen: ${global_format}`,
+      null,
+      req.body
+    );
+    res.json({ success: true, message: "Format penomoran dokumen berhasil disimpan." });
+  });
+  app.put("/api/settings/sequences/counter", authenticateJWT, (req, res) => {
+    const user = req.user;
+    if (user.role_id !== 1 && user.role_kode !== "super_admin" && user.role_kode !== "superadmin") {
+      res.status(403).json({ error: "Hanya Super Admin yang berwenang mengubah nomor urut counter dokumen." });
+      return;
+    }
+    const { kode_dokumen, tahun, new_last_seq } = req.body;
+    if (!kode_dokumen || tahun === void 0 || new_last_seq === void 0) {
+      res.status(400).json({ error: "Kode dokumen, tahun periode, dan nilai counter baru wajib diisi." });
+      return;
+    }
+    const nextVal = Math.max(0, parseInt(String(new_last_seq), 10) || 0);
+    const existing = db.prepare("SELECT last_seq FROM number_sequences WHERE kode_dokumen = ? AND tahun = ?").get(kode_dokumen, Number(tahun));
+    db.prepare(`
+      INSERT INTO number_sequences (kode_dokumen, tahun, last_seq)
+      VALUES (?, ?, ?)
+      ON CONFLICT(kode_dokumen, tahun) DO UPDATE SET last_seq = excluded.last_seq
+    `).run(kode_dokumen, Number(tahun), nextVal);
+    logAudit(
+      user,
+      "Pengaturan Penomoran Dokumen",
+      "UPDATE_SEQUENCE_COUNTER",
+      `${kode_dokumen}-${tahun}`,
+      `Super Admin (${user.nama}) mengubah counter nomor ${kode_dokumen} (Periode ${tahun}) dari ${existing?.last_seq ?? 0} menjadi ${nextVal}`,
+      { old_seq: existing?.last_seq ?? 0 },
+      { new_seq: nextVal, kode_dokumen, tahun }
+    );
+    res.json({
+      success: true,
+      message: `Counter ${kode_dokumen} untuk periode ${tahun} berhasil disesuaikan menjadi ${nextVal}.`,
+      kode_dokumen,
+      tahun: Number(tahun),
+      last_seq: nextVal
     });
   });
   app.put("/api/settings/company", authenticateJWT, (req, res) => {

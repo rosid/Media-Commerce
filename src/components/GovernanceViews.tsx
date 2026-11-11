@@ -18,12 +18,14 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileDigit,
   FileSignature,
   FileSpreadsheet,
   FileText,
   Filter,
   Globe,
   HardDrive,
+  Hash,
   Image,
   Info,
   KeyRound,
@@ -1361,7 +1363,7 @@ export const SettingsModule: React.FC<{
   showToast?: (msg: string) => void;
   onRefresh: () => void;
 }> = ({ settingsData, currentUser, apiPut, apiPost, apiGet, showToast, onRefresh }) => {
-  const [subTab, setSubTab] = useState<'web' | 'seo' | 'security' | 'company' | 'rbac' | 'users' | 'system'>('web');
+  const [subTab, setSubTab] = useState<'web' | 'seo' | 'security' | 'company' | 'sequence' | 'rbac' | 'users' | 'system'>('web');
   const [selectedRoleId, setSelectedRoleId] = useState<number>(6);
 
   // New User Form State
@@ -1439,6 +1441,34 @@ export const SettingsModule: React.FC<{
   const [sigMap, setSigMap] = useState<PdfSignatureMap>(DEFAULT_PDF_SIGNATURES);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
+  // 6. MASTER PENGATURAN SEQUENCE PENOMORAN DOKUMEN
+  const [seqGlobalFormat, setSeqGlobalFormat] = useState('{KODE}/{TAHUN}/{BULAN}/{URUT}');
+  const [seqDigits, setSeqDigits] = useState(4);
+  const [seqResetPeriod, setSeqResetPeriod] = useState<'TAHUNAN' | 'BULANAN' | 'BERKELANJUTAN'>('TAHUNAN');
+  const [seqCodes, setSeqCodes] = useState<Record<string, string>>({
+    QT: 'QT',
+    DL: 'DL',
+    MO: 'MO',
+    BT: 'BT',
+    INV: 'INV',
+  });
+  const [seqFormats, setSeqFormats] = useState<Record<string, string>>({
+    QT: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    DL: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    MO: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    BT: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    INV: '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+  });
+  const [seqCounters, setSeqCounters] = useState<Array<any>>([]);
+  const [isSavingSeq, setIsSavingSeq] = useState(false);
+  const [selectedCounterForEdit, setSelectedCounterForEdit] = useState<{
+    kode_dokumen: string;
+    tahun: number;
+    last_seq: number;
+  } | null>(null);
+  const [newCounterValue, setNewCounterValue] = useState<number>(0);
+  const [isUpdatingCounter, setIsUpdatingCounter] = useState(false);
+
   const rawSettings = settingsData?.settings;
 
   useEffect(() => {
@@ -1495,6 +1525,25 @@ export const SettingsModule: React.FC<{
     setLogoPerusahaan(rawSettings.logo_perusahaan || DEFAULT_COMPANY_LOGO_SVG);
     setTampilkanLogoKop(rawSettings.tampilkan_logo_kop !== 'false');
     setSigMap(parsePdfSignaturesConfig(rawSettings.pdf_signatures_config));
+
+    // Sequence Penomoran Dokumen
+    setSeqGlobalFormat(rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}');
+    setSeqDigits(Number(rawSettings.seq_digits) || 4);
+    setSeqResetPeriod((rawSettings.seq_reset_period || rawSettings.reset_nomor || 'TAHUNAN').toUpperCase() as any);
+    setSeqCodes({
+      QT: rawSettings.seq_code_QT || 'QT',
+      DL: rawSettings.seq_code_DL || 'DL',
+      MO: rawSettings.seq_code_MO || 'MO',
+      BT: rawSettings.seq_code_BT || 'BT',
+      INV: rawSettings.seq_code_INV || 'INV',
+    });
+    setSeqFormats({
+      QT: rawSettings.seq_format_QT || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+      DL: rawSettings.seq_format_DL || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+      MO: rawSettings.seq_format_MO || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+      BT: rawSettings.seq_format_BT || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+      INV: rawSettings.seq_format_INV || rawSettings.seq_format_global || rawSettings.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}',
+    });
   }, [rawSettings]);
 
   const loadSystemStats = async () => {
@@ -1510,17 +1559,36 @@ export const SettingsModule: React.FC<{
     }
   };
 
+  const loadSequenceSettings = async () => {
+    if (!apiGet) return;
+    try {
+      const res = await apiGet('/api/settings/sequences');
+      if (res?.config) {
+        setSeqGlobalFormat(res.config.global_format || '{KODE}/{TAHUN}/{BULAN}/{URUT}');
+        setSeqDigits(res.config.digits || 4);
+        setSeqResetPeriod(res.config.reset_period || 'TAHUNAN');
+        if (res.config.codes) setSeqCodes(res.config.codes);
+        if (res.config.formats) setSeqFormats(res.config.formats);
+      }
+      if (res?.counters) setSeqCounters(res.counters);
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     if (subTab === 'system') {
       loadSystemStats();
+    } else if (subTab === 'sequence') {
+      loadSequenceSettings();
     }
   }, [subTab]);
 
   if (!settingsData) return null;
 
   const { roleMatrix = [], users = [], sequences = [] } = settingsData;
-  const isSuperAdmin = currentUser.role_kode === 'super_admin';
-  const canEditCompany = ['super_admin', 'admin'].includes(currentUser.role_kode);
+  const isSuperAdmin = currentUser.role_kode === 'super_admin' || currentUser.role_id === 1 || currentUser.role_kode === 'superadmin';
+  const canEditCompany = ['super_admin', 'admin'].includes(currentUser.role_kode) || currentUser.role_id === 1;
   const activeRoleObj = roleMatrix.find((r: any) => r.id === selectedRoleId) || roleMatrix[0];
 
   const handleTogglePerm = async (
@@ -1719,6 +1787,86 @@ export const SettingsModule: React.FC<{
       if (showToast) showToast('Pengaturan Kop PDF & Penandatangan berhasil disimpan.');
     } finally {
       setIsSavingConfig(false);
+    }
+  };
+
+  const computeLivePreview = (docKey: 'QT' | 'DL' | 'MO' | 'BT' | 'INV') => {
+    const d = new Date();
+    const y4 = String(d.getFullYear());
+    const y2 = y4.slice(-2);
+    const mNum = d.getMonth() + 1;
+    const m2 = String(mNum).padStart(2, '0');
+    const day2 = String(d.getDate()).padStart(2, '0');
+    const ROMANS: Record<number, string> = {
+      1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V', 6: 'VI',
+      7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X', 11: 'XI', 12: 'XII'
+    };
+    const roman = ROMANS[mNum] || m2;
+
+    let seqTahunKey = d.getFullYear();
+    if (seqResetPeriod === 'BULANAN') {
+      seqTahunKey = d.getFullYear() * 100 + mNum;
+    } else if (seqResetPeriod === 'BERKELANJUTAN') {
+      seqTahunKey = 0;
+    }
+
+    const matchCounter = seqCounters.find((c) => c.kode_dokumen === docKey && c.tahun === seqTahunKey);
+    const nextSeq = (matchCounter ? matchCounter.last_seq : 0) + 1;
+    const padded = String(nextSeq).padStart(seqDigits, '0');
+
+    const docCode = seqCodes[docKey] || docKey;
+    const tpl = seqFormats[docKey] || seqGlobalFormat || '{KODE}/{TAHUN}/{BULAN}/{URUT}';
+
+    return tpl
+      .replace(/{KODE}/g, docCode)
+      .replace(/{TAHUN}/g, y4)
+      .replace(/{TH}/g, y2)
+      .replace(/{BULAN}/g, m2)
+      .replace(/{ROMAN}/g, roman)
+      .replace(/{HARI}/g, day2)
+      .replace(/{URUT}/g, padded);
+  };
+
+  const handleSaveSequenceFormat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperAdmin) return;
+    setIsSavingSeq(true);
+    try {
+      await apiPut('/api/settings/sequences/format', {
+        global_format: seqGlobalFormat,
+        digits: seqDigits,
+        reset_period: seqResetPeriod,
+        codes: seqCodes,
+        formats: seqFormats,
+      });
+      if (showToast) showToast('Konfigurasi sequence penomoran dokumen berhasil disimpan.');
+      await loadSequenceSettings();
+      onRefresh();
+    } catch (err: any) {
+      if (showToast) showToast('Gagal menyimpan konfigurasi penomoran: ' + (err.message || 'Error'));
+    } finally {
+      setIsSavingSeq(false);
+    }
+  };
+
+  const handleUpdateCounter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperAdmin || !selectedCounterForEdit) return;
+    setIsUpdatingCounter(true);
+    try {
+      await apiPut('/api/settings/sequences/counter', {
+        kode_dokumen: selectedCounterForEdit.kode_dokumen,
+        tahun: selectedCounterForEdit.tahun,
+        new_last_seq: newCounterValue,
+      });
+      if (showToast) showToast(`Counter ${selectedCounterForEdit.kode_dokumen} berhasil diubah ke ${newCounterValue}.`);
+      setSelectedCounterForEdit(null);
+      await loadSequenceSettings();
+      onRefresh();
+    } catch (err: any) {
+      if (showToast) showToast('Gagal mengubah counter: ' + (err.message || 'Error'));
+    } finally {
+      setIsUpdatingCounter(false);
     }
   };
 
@@ -2006,6 +2154,15 @@ export const SettingsModule: React.FC<{
           >
             <Building2 className="w-3.5 h-3.5 text-indigo-600" />
             Kop PDF & TTD
+          </button>
+          <button
+            onClick={() => setSubTab('sequence')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+              subTab === 'sequence' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileDigit className="w-3.5 h-3.5 text-amber-600" />
+            Penomoran Dokumen
           </button>
           <button
             onClick={() => setSubTab('rbac')}
@@ -3239,6 +3396,447 @@ export const SettingsModule: React.FC<{
             </div>
           </div>
         </form>
+      )}
+
+      {/* ====================================================================
+          TAB: PENGATURAN SEQUENCE & FORMAT PENOMORAN DOKUMEN
+         ==================================================================== */}
+      {subTab === 'sequence' && (
+        <div className="space-y-6 text-xs">
+          {/* Top Bar Header & Action */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <FileDigit className="w-5 h-5 text-amber-600" />
+                Pengaturan Sequence & Format Penomoran Dokumen
+              </h2>
+              <p className="text-slate-500 text-[11px] mt-0.5">
+                Konfigurasi pola nomor otomatis untuk Quotation, Paket Deal, Media Order, Bukti Tayang, dan Invoice.
+              </p>
+            </div>
+
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={handleSaveSequenceFormat}
+                disabled={isSavingSeq}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg flex items-center gap-2 transition-colors cursor-pointer shadow-xs self-start sm:self-auto shrink-0"
+              >
+                {isSavingSeq ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                <span>{isSavingSeq ? 'Menyimpan...' : 'Simpan Format Penomoran'}</span>
+              </button>
+            )}
+          </div>
+
+          {/* 1. LIVE PREVIEW STRIP (5 KARTU DOKUMEN) */}
+          <div>
+            <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 text-blue-600" />
+              Pratinjau Nomor Dokumen Berikutnya (Live Preview)
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {[
+                { key: 'QT' as const, label: 'Quotation', bg: 'bg-blue-50 border-blue-200 text-blue-900', badge: 'bg-blue-600 text-white' },
+                { key: 'DL' as const, label: 'Paket Deal', bg: 'bg-indigo-50 border-indigo-200 text-indigo-900', badge: 'bg-indigo-600 text-white' },
+                { key: 'MO' as const, label: 'Media Order (MO)', bg: 'bg-emerald-50 border-emerald-200 text-emerald-900', badge: 'bg-emerald-600 text-white' },
+                { key: 'BT' as const, label: 'Bukti Tayang', bg: 'bg-amber-50 border-amber-200 text-amber-900', badge: 'bg-amber-600 text-white' },
+                { key: 'INV' as const, label: 'Invoice Penagihan', bg: 'bg-rose-50 border-rose-200 text-rose-900', badge: 'bg-rose-600 text-white' },
+              ].map((doc) => (
+                <div key={doc.key} className={`border rounded-xl p-3.5 ${doc.bg} shadow-2xs`}>
+                  <div className="flex items-center justify-between gap-1 mb-1.5">
+                    <span className="font-bold text-xs">{doc.label}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${doc.badge}`}>
+                      {seqCodes[doc.key] || doc.key}
+                    </span>
+                  </div>
+                  <div className="font-mono font-bold text-xs tracking-tight break-all bg-white/80 p-2 rounded-lg border border-slate-200/60 text-slate-900">
+                    {computeLivePreview(doc.key)}
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-sans">
+                    Format: <span className="font-mono text-slate-700 font-medium">{seqFormats[doc.key] || seqGlobalFormat}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. PENGATURAN POLA GLOBAL & PRESETS */}
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-amber-600" />
+                Format Pola Penomoran Global & Aturan Reset
+              </h3>
+              <span className="text-[11px] text-slate-500">Berlaku untuk semua jenis dokumen secara default</span>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Format Template Global *
+                </label>
+                <input
+                  type="text"
+                  value={seqGlobalFormat}
+                  onChange={(e) => setSeqGlobalFormat(e.target.value)}
+                  disabled={!isSuperAdmin}
+                  placeholder="Contoh: {KODE}/{TAHUN}/{BULAN}/{URUT}"
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg font-mono text-xs text-blue-900 font-semibold bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Quick Presets Buttons */}
+              <div>
+                <label className="block font-medium text-slate-600 text-[11px] mb-1.5">
+                  Preset Format Populer (Klik untuk Menerapkan):
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'Standar Indonesia (KODE/TAHUN/BULAN/URUT)', pattern: '{KODE}/{TAHUN}/{BULAN}/{URUT}' },
+                    { label: 'Bulan Romawi (KODE/ROMAN/TAHUN/URUT)', pattern: '{KODE}/{ROMAN}/{TAHUN}/{URUT}' },
+                    { label: 'Inisial Perusahaan (KODE/DM/TAHUN/URUT)', pattern: '{KODE}/DM/{TAHUN}/{BULAN}/{URUT}' },
+                    { label: 'Format Ringkas (KODE-YYMM-URUT)', pattern: '{KODE}-{TH}{BULAN}-{URUT}' },
+                    { label: 'Nomor di Depan (URUT/KODE/BULAN/TAHUN)', pattern: '{URUT}/{KODE}/{BULAN}/{TAHUN}' },
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      disabled={!isSuperAdmin}
+                      onClick={() => setSeqGlobalFormat(preset.pattern)}
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-mono transition-colors cursor-pointer ${
+                        seqGlobalFormat === preset.pattern
+                          ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
+                          : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tag Legend / Petunjuk Variabel */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="font-semibold text-slate-700 text-[11px] flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-blue-600" />
+                  Daftar Variabel yang Dapat Digunakan dalam Format:
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 font-mono text-[11px]">
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-blue-700">{'{KODE}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">Kode dokumen (QT, INV, dsb)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-blue-700">{'{TAHUN}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">4 digit tahun (2026)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-blue-700">{'{TH}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">2 digit tahun (26)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-blue-700">{'{BULAN}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">2 digit bulan (01 s.d. 12)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-amber-700">{'{ROMAN}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">Bulan Romawi (I s.d. XII)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-blue-700">{'{HARI}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">2 digit tanggal (01 s.d. 31)</p>
+                  </div>
+                  <div className="p-2 bg-white rounded border border-slate-200">
+                    <span className="font-bold text-emerald-700">{'{URUT}'}</span>
+                    <p className="font-sans text-[10px] text-slate-500 mt-0.5">Nomor urut sekuensial</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panjang Digit & Periode Reset */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Panjang Digit Urut ({'{URUT}'}) *
+                  </label>
+                  <select
+                    value={seqDigits}
+                    onChange={(e) => setSeqDigits(Number(e.target.value))}
+                    disabled={!isSuperAdmin}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white cursor-pointer"
+                  >
+                    <option value={3}>3 Digit (Contoh: 001)</option>
+                    <option value={4}>4 Digit (Contoh: 0001 - Standar)</option>
+                    <option value={5}>5 Digit (Contoh: 00001)</option>
+                    <option value={6}>6 Digit (Contoh: 000001)</option>
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Digit nomor urut akan otomatis diisi angka 0 di depannya (zero padding).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Periode Siklus Reset Nomor Urut *
+                  </label>
+                  <select
+                    value={seqResetPeriod}
+                    onChange={(e) => setSeqResetPeriod(e.target.value as any)}
+                    disabled={!isSuperAdmin}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white cursor-pointer"
+                  >
+                    <option value="TAHUNAN">Tahunan (Reset ke 0001 setiap 1 Januari - Rekomendasi)</option>
+                    <option value="BULANAN">Bulanan (Reset ke 0001 setiap awal bulan)</option>
+                    <option value="BERKELANJUTAN">Berkelanjutan (Tidak pernah reset, lanjut terus)</option>
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Menentukan kapan counter urut nomor dokumen otomatis kembali ke urutan 1.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. KUSTOMISASI PREFIKS & FORMAT KHUSUS PER JENIS DOKUMEN */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-blue-600" />
+                  Kustomisasi Kode Prefiks & Format Khusus per Dokumen
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Anda dapat menentukan kode inisial atau format khusus untuk jenis dokumen tertentu bila tidak ingin menggunakan format global.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                    <th className="py-3 px-4 text-left">Jenis Dokumen</th>
+                    <th className="py-3 px-4 text-left w-36">Kode Prefiks ({'{KODE}'})</th>
+                    <th className="py-3 px-4 text-left">Format Khusus Dokumen (Opsional)</th>
+                    <th className="py-3 px-4 text-left">Hasil Penomoran (Live)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {[
+                    { key: 'QT' as const, label: 'Quotation', desc: 'Surat penawaran harga iklan resmi' },
+                    { key: 'DL' as const, label: 'Paket Deal', desc: 'Konfirmasi kesepakatan komersial' },
+                    { key: 'MO' as const, label: 'Media Order (MO)', desc: 'Surat perintah tayang inventori' },
+                    { key: 'BT' as const, label: 'Bukti Tayang', desc: 'Laporan tayang dan verifikasi' },
+                    { key: 'INV' as const, label: 'Invoice Penagihan', desc: 'Faktur penagihan pembayaran klien' },
+                  ].map((row) => (
+                    <tr key={row.key} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900">{row.label}</div>
+                        <div className="text-[11px] text-slate-500">{row.desc}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <input
+                          type="text"
+                          value={seqCodes[row.key] || ''}
+                          disabled={!isSuperAdmin}
+                          onChange={(e) =>
+                            setSeqCodes({ ...seqCodes, [row.key]: e.target.value.toUpperCase() })
+                          }
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono font-bold text-xs uppercase"
+                        />
+                      </td>
+                      <td className="py-3 px-4">
+                        <input
+                          type="text"
+                          value={seqFormats[row.key] || ''}
+                          disabled={!isSuperAdmin}
+                          onChange={(e) =>
+                            setSeqFormats({ ...seqFormats, [row.key]: e.target.value })
+                          }
+                          placeholder={seqGlobalFormat}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs"
+                        />
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                          {computeLivePreview(row.key)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 4. MANAJEMEN COUNTER NOMOR BERJALAN (NUMBER SEQUENCES) */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                  <Hash className="w-4 h-4 text-emerald-600" />
+                  Daftar Counter Nomor Urut Berjalan (Database Sequences)
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Lihat angka urut terakhir sistem (`last_seq`) dan sesuaikan jika perusahaan bermigrasi dari sistem pembukuan lama.
+                </p>
+              </div>
+
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={loadSequenceSettings}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                  Muat Ulang
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                    <th className="py-3 px-4 text-left">Kode Dokumen</th>
+                    <th className="py-3 px-4 text-left">Periode Akuntansi</th>
+                    <th className="py-3 px-4 text-center">Nomor Terakhir (last_seq)</th>
+                    <th className="py-3 px-4 text-left font-mono">Nomor Berikutnya</th>
+                    {isSuperAdmin && <th className="py-3 px-4 text-right">Aksi Penyesuaian</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {seqCounters.length === 0 ? (
+                    <tr>
+                      <td colSpan={isSuperAdmin ? 5 : 4} className="py-8 text-center text-slate-400">
+                        Belum ada riwayat nomor transaksi di database. Dokumen pertama akan dimulai dari urutan 0001.
+                      </td>
+                    </tr>
+                  ) : (
+                    seqCounters.map((c: any) => {
+                      const docLabels: Record<string, string> = {
+                        QT: 'Quotation',
+                        DL: 'Paket Deal',
+                        MO: 'Media Order',
+                        BT: 'Bukti Tayang',
+                        INV: 'Invoice',
+                      };
+                      const periodeLabel =
+                        c.tahun === 0
+                          ? 'Berkelanjutan'
+                          : c.tahun > 9999
+                          ? `Tahun ${Math.floor(c.tahun / 100)}, Bulan ${c.tahun % 100}`
+                          : `Tahun ${c.tahun}`;
+
+                      return (
+                        <tr key={c.id || `${c.kode_dokumen}-${c.tahun}`} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-4">
+                            <span className="font-bold text-slate-900">{docLabels[c.kode_dokumen] || c.kode_dokumen}</span>
+                            <span className="ml-2 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                              {c.kode_dokumen}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-medium text-slate-700">{periodeLabel}</td>
+                          <td className="py-3 px-4 text-center font-mono font-bold text-slate-900 text-sm">
+                            {c.last_seq}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-semibold text-blue-700">
+                            Urutan ke-{(c.last_seq || 0) + 1}
+                          </td>
+                          {isSuperAdmin && (
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCounterForEdit(c);
+                                  setNewCounterValue(c.last_seq);
+                                }}
+                                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer inline-flex"
+                              >
+                                <Sliders className="w-3 h-3 text-amber-600" />
+                                <span>Sesuaikan Counter</span>
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Modal Sesuaikan Counter Penomoran */}
+          {selectedCounterForEdit && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Hash className="w-5 h-5 text-amber-400" />
+                    <h3 className="font-bold text-sm">Sesuaikan Counter Nomor Urut</h3>
+                  </div>
+                  <button
+                    onClick={() => setSelectedCounterForEdit(null)}
+                    className="text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleUpdateCounter} className="p-6 space-y-4 text-xs">
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1">
+                    <div className="font-bold text-amber-900">
+                      Dokumen: {selectedCounterForEdit.kode_dokumen} (Periode {selectedCounterForEdit.tahun})
+                    </div>
+                    <div className="text-amber-800 text-[11px]">
+                      Nilai saat ini: <span className="font-mono font-bold">{selectedCounterForEdit.last_seq}</span>. Dokumen berikutnya akan menggunakan urutan <span className="font-mono font-bold">{selectedCounterForEdit.last_seq + 1}</span>.
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Nilai Terakhir Baru (last_seq) *
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      required
+                      value={newCounterValue}
+                      onChange={(e) => setNewCounterValue(parseInt(e.target.value, 10) || 0)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Contoh: Jika Anda mengisi <strong>100</strong>, dokumen berikutnya yang dibuat akan mendapat nomor urut <strong>101</strong>. Jika diisi <strong>0</strong>, counter akan kembali ke <strong>1</strong>.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCounterForEdit(null)}
+                      className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg font-semibold hover:bg-slate-50 cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isUpdatingCounter}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      {isUpdatingCounter ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                      <span>{isUpdatingCounter ? 'Menyimpan...' : 'Simpan Counter'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ====================================================================

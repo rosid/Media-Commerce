@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile, isMariaDBConfigured, testMariaDBConnection, mariadbPool, seedCoreSystemData, seedSampleDemoData, resetDatabaseToClean } from './src/db.ts';
+import { db, dbPath, initDatabase, generateDocumentNumber, restoreDatabaseFromFile, isMariaDBConfigured, testMariaDBConnection, mariadbPool, seedCoreSystemData, seedSampleDemoData, resetDatabaseToClean, getSequenceConfig, formatSequenceNumber } from './src/db.ts';
 
 dotenv.config();
 
@@ -3001,6 +3001,154 @@ async function startServer() {
       success: true,
       aktif: newStatus,
       message: `Status akun ${targetUser.nama} berhasil diubah menjadi ${newStatus === 1 ? 'Aktif' : 'Nonaktif'}.`,
+    });
+  });
+
+  // ============================================================================
+  // DOCUMENT NUMBER SEQUENCE SETTINGS (PENGATURAN PENOMORAN DOKUMEN)
+  // ============================================================================
+  app.get('/api/settings/sequences', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (
+      user.role_id !== 1 &&
+      user.role_kode !== 'super_admin' &&
+      user.role_kode !== 'superadmin' &&
+      user.role_kode !== 'admin'
+    ) {
+      res.status(403).json({ error: 'Tidak memiliki izin mengakses pengaturan nomor dokumen.' });
+      return;
+    }
+
+    const config = getSequenceConfig();
+    const counters = db
+      .prepare('SELECT * FROM number_sequences ORDER BY tahun DESC, kode_dokumen ASC')
+      .all() as Array<{
+      id: number;
+      kode_dokumen: string;
+      tahun: number;
+      last_seq: number;
+    }>;
+
+    const now = new Date();
+    const docTypes = ['QT', 'DL', 'MO', 'BT', 'INV'] as const;
+    const previews: Record<string, string> = {};
+
+    for (const doc of docTypes) {
+      const docCode = config.codes[doc] || doc;
+      const template = config.formats[doc] || config.global_format;
+
+      let seqTahunKey = now.getFullYear();
+      if (config.reset_period === 'BULANAN') {
+        seqTahunKey = now.getFullYear() * 100 + (now.getMonth() + 1);
+      } else if (config.reset_period === 'BERKELANJUTAN') {
+        seqTahunKey = 0;
+      }
+
+      const matchCounter = counters.find((c) => c.kode_dokumen === doc && c.tahun === seqTahunKey);
+      const nextSeq = (matchCounter ? matchCounter.last_seq : 0) + 1;
+      previews[doc] = formatSequenceNumber(template, docCode, now, nextSeq, config.digits);
+    }
+
+    res.json({
+      config,
+      counters,
+      previews,
+    });
+  });
+
+  app.put('/api/settings/sequences/format', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang berwenang mengubah konfigurasi format penomoran dokumen.' });
+      return;
+    }
+
+    const { global_format, digits, reset_period, codes, formats } = req.body;
+
+    if (!global_format || typeof global_format !== 'string') {
+      res.status(400).json({ error: 'Format penomoran global wajib diisi.' });
+      return;
+    }
+
+    const stmt = db.prepare('INSERT OR REPLACE INTO settings (kunci, nilai) VALUES (?, ?)');
+    db.transaction(() => {
+      stmt.run('seq_format_global', global_format.trim());
+      stmt.run('format_nomor', global_format.trim());
+      if (digits) {
+        stmt.run('seq_digits', String(Math.min(Math.max(Number(digits) || 4, 3), 8)));
+      }
+      if (reset_period) {
+        const periodStr = String(reset_period).toUpperCase();
+        stmt.run('seq_reset_period', periodStr);
+        stmt.run('reset_nomor', periodStr);
+      }
+
+      if (codes && typeof codes === 'object') {
+        for (const [k, v] of Object.entries(codes)) {
+          if (v) stmt.run(`seq_code_${k}`, String(v).trim().toUpperCase());
+        }
+      }
+
+      if (formats && typeof formats === 'object') {
+        for (const [k, v] of Object.entries(formats)) {
+          if (v) stmt.run(`seq_format_${k}`, String(v).trim());
+        }
+      }
+    })();
+
+    logAudit(
+      user,
+      'Pengaturan Penomoran Dokumen',
+      'UPDATE_SEQUENCE_FORMAT',
+      null,
+      `Super Admin (${user.nama}) memperbarui format penomoran dokumen: ${global_format}`,
+      null,
+      req.body
+    );
+
+    res.json({ success: true, message: 'Format penomoran dokumen berhasil disimpan.' });
+  });
+
+  app.put('/api/settings/sequences/counter', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang berwenang mengubah nomor urut counter dokumen.' });
+      return;
+    }
+
+    const { kode_dokumen, tahun, new_last_seq } = req.body;
+    if (!kode_dokumen || tahun === undefined || new_last_seq === undefined) {
+      res.status(400).json({ error: 'Kode dokumen, tahun periode, dan nilai counter baru wajib diisi.' });
+      return;
+    }
+
+    const nextVal = Math.max(0, parseInt(String(new_last_seq), 10) || 0);
+    const existing = db
+      .prepare('SELECT last_seq FROM number_sequences WHERE kode_dokumen = ? AND tahun = ?')
+      .get(kode_dokumen, Number(tahun)) as { last_seq: number } | undefined;
+
+    db.prepare(`
+      INSERT INTO number_sequences (kode_dokumen, tahun, last_seq)
+      VALUES (?, ?, ?)
+      ON CONFLICT(kode_dokumen, tahun) DO UPDATE SET last_seq = excluded.last_seq
+    `).run(kode_dokumen, Number(tahun), nextVal);
+
+    logAudit(
+      user,
+      'Pengaturan Penomoran Dokumen',
+      'UPDATE_SEQUENCE_COUNTER',
+      `${kode_dokumen}-${tahun}`,
+      `Super Admin (${user.nama}) mengubah counter nomor ${kode_dokumen} (Periode ${tahun}) dari ${existing?.last_seq ?? 0} menjadi ${nextVal}`,
+      { old_seq: existing?.last_seq ?? 0 },
+      { new_seq: nextVal, kode_dokumen, tahun }
+    );
+
+    res.json({
+      success: true,
+      message: `Counter ${kode_dokumen} untuk periode ${tahun} berhasil disesuaikan menjadi ${nextVal}.`,
+      kode_dokumen,
+      tahun: Number(tahun),
+      last_seq: nextVal,
     });
   });
 

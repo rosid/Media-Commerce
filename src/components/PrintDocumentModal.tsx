@@ -75,13 +75,13 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
   const getDocTitle = () => {
     switch (docType) {
       case 'QUOTATION':
-        return 'QUOTATION PENAWARAN IKLAN';
+        return 'QUOTATION';
       case 'MEDIA_ORDER':
         return 'MEDIA ORDER (MO)';
       case 'PROOF':
         return 'LAPORAN BUKTI TAYANG';
       case 'INVOICE':
-        return 'INVOICE PENAGIHAN';
+        return 'INVOICE';
       case 'DEAL_PROGRESS':
         return 'LAPORAN PROGRES PAKET DEAL';
     }

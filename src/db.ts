@@ -701,6 +701,19 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
     ['app_timezone', 'Asia/Jakarta (WIB)'],
     ['app_canonical_url', 'https://erp.nusantaramedia.id'],
     ['google_site_verification', 'google-site-verification=mf_vps_auth_token_sample_2026'],
+    ['seq_format_global', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_digits', '4'],
+    ['seq_reset_period', 'TAHUNAN'],
+    ['seq_code_QT', 'QT'],
+    ['seq_code_DL', 'DL'],
+    ['seq_code_MO', 'MO'],
+    ['seq_code_BT', 'BT'],
+    ['seq_code_INV', 'INV'],
+    ['seq_format_QT', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_format_DL', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_format_MO', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_format_BT', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
+    ['seq_format_INV', '{KODE}/{TAHUN}/{BULAN}/{URUT}'],
   ];
 
   const insWebSetting = db.prepare('INSERT OR IGNORE INTO settings (kunci, nilai) VALUES (?, ?)');
@@ -709,15 +722,106 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
   }
 }
 
+export const ROMAN_MONTHS: Record<number, string> = {
+  1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V', 6: 'VI',
+  7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X', 11: 'XI', 12: 'XII'
+};
+
+export interface SequenceFormatConfig {
+  global_format: string;
+  formats: Record<string, string>;
+  codes: Record<string, string>;
+  digits: number;
+  reset_period: 'TAHUNAN' | 'BULANAN' | 'BERKELANJUTAN';
+}
+
+export function getSequenceConfig(): SequenceFormatConfig {
+  const rows = db
+    .prepare(`SELECT kunci, nilai FROM settings WHERE kunci LIKE 'seq_%' OR kunci IN ('format_nomor', 'reset_nomor')`)
+    .all() as Array<{ kunci: string; nilai: string }>;
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.kunci] = r.nilai;
+  }
+
+  const global_format = map.seq_format_global || map.format_nomor || '{KODE}/{TAHUN}/{BULAN}/{URUT}';
+  const digits = Math.min(Math.max(Number(map.seq_digits) || 4, 3), 8);
+  const reset_period = (map.seq_reset_period || map.reset_nomor || 'TAHUNAN').toUpperCase() as 'TAHUNAN' | 'BULANAN' | 'BERKELANJUTAN';
+
+  const defaultCodes: Record<string, string> = {
+    QT: 'QT',
+    DL: 'DL',
+    MO: 'MO',
+    BT: 'BT',
+    INV: 'INV',
+  };
+
+  const codes: Record<string, string> = {
+    QT: map.seq_code_QT || defaultCodes.QT,
+    DL: map.seq_code_DL || defaultCodes.DL,
+    MO: map.seq_code_MO || defaultCodes.MO,
+    BT: map.seq_code_BT || defaultCodes.BT,
+    INV: map.seq_code_INV || defaultCodes.INV,
+  };
+
+  const formats: Record<string, string> = {
+    QT: map.seq_format_QT || global_format,
+    DL: map.seq_format_DL || global_format,
+    MO: map.seq_format_MO || global_format,
+    BT: map.seq_format_BT || global_format,
+    INV: map.seq_format_INV || global_format,
+  };
+
+  return { global_format, formats, codes, digits, reset_period };
+}
+
+export function formatSequenceNumber(
+  formatTemplate: string,
+  docCode: string,
+  date: Date,
+  seqNumber: number,
+  digits = 4
+): string {
+  const year4 = String(date.getFullYear());
+  const year2 = year4.slice(-2);
+  const monthNum = date.getMonth() + 1;
+  const month2 = String(monthNum).padStart(2, '0');
+  const day2 = String(date.getDate()).padStart(2, '0');
+  const romanMonth = ROMAN_MONTHS[monthNum] || month2;
+  const paddedSeq = String(seqNumber).padStart(digits, '0');
+
+  return formatTemplate
+    .replace(/{KODE}/g, docCode)
+    .replace(/{TAHUN}/g, year4)
+    .replace(/{TH}/g, year2)
+    .replace(/{BULAN}/g, month2)
+    .replace(/{ROMAN}/g, romanMonth)
+    .replace(/{HARI}/g, day2)
+    .replace(/{URUT}/g, paddedSeq);
+}
+
 export function generateDocumentNumber(kode: 'QT' | 'DL' | 'MO' | 'BT' | 'INV', dateStr?: string): string {
-  const now = dateStr ? new Date(dateStr) : new Date('2026-11-08T10:00:00Z');
-  const tahun = now.getFullYear();
-  const bulan = String(now.getMonth() + 1).padStart(2, '0');
+  const now = dateStr ? new Date(dateStr) : new Date();
+  const validDate = isNaN(now.getTime()) ? new Date() : now;
+
+  const config = getSequenceConfig();
+  const docCode = config.codes[kode] || kode;
+  const template = config.formats[kode] || config.global_format;
+
+  const year = validDate.getFullYear();
+  const month = validDate.getMonth() + 1;
+
+  let seqTahunKey = year;
+  if (config.reset_period === 'BULANAN') {
+    seqTahunKey = year * 100 + month; // e.g. 202611
+  } else if (config.reset_period === 'BERKELANJUTAN') {
+    seqTahunKey = 0; // continuous across all years
+  }
 
   const tx = db.transaction(() => {
     const existing = db
       .prepare('SELECT last_seq FROM number_sequences WHERE kode_dokumen = ? AND tahun = ?')
-      .get(kode, tahun) as { last_seq: number } | undefined;
+      .get(kode, seqTahunKey) as { last_seq: number } | undefined;
 
     let nextSeq = 1;
     if (existing) {
@@ -725,16 +829,16 @@ export function generateDocumentNumber(kode: 'QT' | 'DL' | 'MO' | 'BT' | 'INV', 
       db.prepare('UPDATE number_sequences SET last_seq = ? WHERE kode_dokumen = ? AND tahun = ?').run(
         nextSeq,
         kode,
-        tahun
+        seqTahunKey
       );
     } else {
       db.prepare('INSERT INTO number_sequences (kode_dokumen, tahun, last_seq) VALUES (?, ?, ?)').run(
         kode,
-        tahun,
+        seqTahunKey,
         nextSeq
       );
     }
-    return `${kode}/${tahun}/${bulan}/${String(nextSeq).padStart(4, '0')}`;
+    return formatSequenceNumber(template, docCode, validDate, nextSeq, config.digits);
   });
 
   return tx();
