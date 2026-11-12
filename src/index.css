@@ -144,6 +144,100 @@ html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) textarea::placeho
   color: #0F172A !important;
 }
 
+/* ============================================================================
+   COMPACT DOCUMENT SCALING (70% Font & Proportionate Spacing)
+   Applied to Quotation, Media Order, Bukti Tayang, and Invoice
+   ============================================================================ */
+.compact-doc-content {
+  font-size: 8.4px;
+  line-height: 1.25;
+}
+
+.compact-doc-content .text-xs {
+  font-size: 8.4px !important;
+  line-height: 1.25 !important;
+}
+
+.compact-doc-content .text-sm {
+  font-size: 9.8px !important;
+  line-height: 1.25 !important;
+}
+
+.compact-doc-content .text-base {
+  font-size: 11.2px !important;
+  line-height: 1.25 !important;
+}
+
+.compact-doc-content .text-\[11px\] {
+  font-size: 7.7px !important;
+  line-height: 1.2 !important;
+}
+
+.compact-doc-content .text-\[10px\] {
+  font-size: 7px !important;
+  line-height: 1.2 !important;
+}
+
+.compact-doc-content table {
+  font-size: 8.4px !important;
+  line-height: 1.2 !important;
+}
+
+.compact-doc-content th {
+  padding: 3.5px 5.5px !important;
+  font-size: 8.4px !important;
+  line-height: 1.2 !important;
+}
+
+.compact-doc-content td {
+  padding: 3.5px 5.5px !important;
+  font-size: 8.4px !important;
+  line-height: 1.2 !important;
+}
+
+.compact-doc-content .py-4 {
+  padding-top: 0.45rem !important;
+  padding-bottom: 0.45rem !important;
+}
+
+.compact-doc-content .py-2 {
+  padding-top: 0.22rem !important;
+  padding-bottom: 0.22rem !important;
+}
+
+.compact-doc-content .px-2\.5 {
+  padding-left: 0.35rem !important;
+  padding-right: 0.35rem !important;
+}
+
+.compact-doc-content .mt-4 {
+  margin-top: 0.5rem !important;
+}
+
+.compact-doc-content .mt-3 {
+  margin-top: 0.35rem !important;
+}
+
+.compact-doc-content .pt-3 {
+  padding-top: 0.35rem !important;
+}
+
+.compact-doc-content .gap-6 {
+  gap: 0.75rem !important;
+}
+
+.compact-doc-content .space-y-1 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.15rem !important;
+}
+
+.compact-doc-content .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.22rem !important;
+}
+
+.compact-doc-content .space-y-2 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.35rem !important;
+}
+
 @media print {
   @page {
     size: A4 landscape;
@@ -175,6 +269,43 @@ html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) textarea::placeho
     margin: 0 !important;
   }
 
+  .compact-doc-content {
+    font-size: 8.4px !important;
+    line-height: 1.25 !important;
+  }
+
+  .compact-doc-content .text-xs {
+    font-size: 8.4px !important;
+    line-height: 1.25 !important;
+  }
+
+  .compact-doc-content .text-sm {
+    font-size: 9.8px !important;
+    line-height: 1.25 !important;
+  }
+
+  .compact-doc-content .text-\[11px\] {
+    font-size: 7.7px !important;
+    line-height: 1.2 !important;
+  }
+
+  .compact-doc-content .text-\[10px\] {
+    font-size: 7px !important;
+    line-height: 1.2 !important;
+  }
+
+  .compact-doc-content table {
+    font-size: 8.4px !important;
+    line-height: 1.2 !important;
+  }
+
+  .compact-doc-content th,
+  .compact-doc-content td {
+    padding: 3.5px 5.5px !important;
+    font-size: 8.4px !important;
+    line-height: 1.2 !important;
+  }
+
   table {
     page-break-inside: auto;
   }
@@ -197,3 +328,4 @@ html.dark :not(.a4-landscape-sheet):not(.a4-landscape-sheet *) textarea::placeho
     break-inside: avoid;
   }
 }
+

@@ -99,6 +99,8 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
     window.print();
   };
 
+  const isCompactDoc = ['QUOTATION', 'MEDIA_ORDER', 'PROOF', 'INVOICE'].includes(docType);
+
   const activeVersion = data.active_version || {};
 
   return (
@@ -168,7 +170,6 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
               <div className="text-lg font-bold tracking-tight text-slate-900">{getDocTitle()}</div>
               <div className="text-sm font-mono font-semibold text-blue-700 mt-0.5">
                 No: {data.nomor_kwitansi || data.nomor}
-                {docType === 'QUOTATION' && data.versi_aktif ? ` (Rev.${data.versi_aktif})` : ''}
               </div>
               <div className="text-xs text-slate-600 mt-1">
                 Tanggal: <span className="font-mono">{formatDateId(data.tanggal_bayar || data.tanggal_terbit || data.periode_mulai || data.created_at)}</span>
@@ -178,8 +179,10 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
             </div>
           </div>
 
-          {/* 2. Reference Block & Metadata per Document Type */}
-          {docType === 'QUOTATION' && (
+          {/* Wrapper for Document Body & Tables (Quotation, Media Order, Bukti Tayang, Invoice scaled to 70%) */}
+          <div className={isCompactDoc ? 'compact-doc-content' : ''}>
+            {/* 2. Reference Block & Metadata per Document Type */}
+            {docType === 'QUOTATION' && (
             <div className="grid grid-cols-2 gap-6 py-4 border-b border-slate-200 text-xs">
               <div>
                 <div className="text-slate-500 font-medium">Ditujukan Kepada Klien:</div>
@@ -201,10 +204,6 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                 <div>
                   <span className="text-slate-500">Account Executive (Sales): </span>
                   <span className="font-semibold text-slate-900">{data.nama_sales || data.pembuat_nama || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">Revisi Aktif: </span>
-                  <span className="font-mono text-slate-900">Rev.{data.versi_aktif}</span>
                 </div>
               </div>
             </div>
@@ -547,7 +546,11 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                                 src={it.screenshot_url}
                                 alt={it.nama_item}
                                 referrerPolicy="no-referrer"
-                                className="w-28 h-16 object-contain rounded border border-slate-300 bg-slate-50 p-0.5"
+                                className={
+                                  isCompactDoc
+                                    ? 'w-20 h-11 object-contain rounded border border-slate-300 bg-slate-50 p-0.5'
+                                    : 'w-28 h-16 object-contain rounded border border-slate-300 bg-slate-50 p-0.5'
+                                }
                               />
                             ) : (
                               <span className="font-mono text-[11px] text-slate-600">
@@ -670,7 +673,9 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                     <div className="font-semibold text-slate-900">Syarat & Ketentuan Penawaran:</div>
                     <div>1. Harga sudah memperhitungkan spesifikasi yang tercantum pada tabel penawaran.</div>
                     <div>2. Penayangan iklan wajib didahului dengan PO/Kontrak dan penerbitan Media Order (MO).</div>
-                    <div>3. Catatan Revisi: {activeVersion.catatan_revisi || '-'}</div>
+                    {activeVersion.catatan_revisi && (
+                      <div>3. Catatan: {activeVersion.catatan_revisi}</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -742,6 +747,7 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
               </div>
             </div>
           )}
+          </div>
         </div>
 
         {/* 5. Unbroken Dynamic Signature & Verification Footer Block (Section 8.1) */}
