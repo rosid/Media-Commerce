@@ -1358,7 +1358,10 @@ export default function App() {
             <ClientsModule
               clients={clients}
               permissions={permissions}
+              currentUser={currentUser}
               apiPost={apiPost}
+              apiDelete={apiDelete}
+              showToast={showToast}
               onRefresh={() => {
                 loadAllWorkspaceData();
                 showToast('Master klien berhasil diperbarui.');
@@ -1372,6 +1375,7 @@ export default function App() {
               packages={packages}
               categories={categories}
               permissions={permissions}
+              currentUser={currentUser}
               apiPost={apiPost}
               apiPut={apiPut}
               apiDelete={apiDelete}
@@ -1390,7 +1394,10 @@ export default function App() {
               products={products}
               packages={packages}
               permissions={permissions}
+              currentUser={currentUser}
               apiPost={apiPost}
+              apiDelete={apiDelete}
+              showToast={showToast}
               onRefresh={() => {
                 loadAllWorkspaceData();
                 showToast('Data Quotation berhasil diperbarui.');
@@ -1409,6 +1416,12 @@ export default function App() {
               selectedDealId={selectedDealId}
               onSelectDeal={(id) => setSelectedDealId(id)}
               permissions={permissions}
+              currentUser={currentUser}
+              apiDelete={apiDelete}
+              showToast={showToast}
+              onRefresh={() => {
+                loadAllWorkspaceData();
+              }}
               onCreateMoFromDeal={(deal) => {
                 setPreselectedMoDealId(deal.id);
                 setActiveTab('media_orders');
@@ -1428,9 +1441,12 @@ export default function App() {
               products={products}
               preselectedDealId={preselectedMoDealId}
               permissions={permissions}
+              currentUser={currentUser}
               apiPost={apiPost}
               apiPatch={apiPatch}
               apiGet={apiGet}
+              apiDelete={apiDelete}
+              showToast={showToast}
               onRefresh={() => {
                 setPreselectedMoDealId(null);
                 loadAllWorkspaceData();
@@ -1450,6 +1466,8 @@ export default function App() {
               currentUser={currentUser}
               apiPost={apiPost}
               apiPatch={apiPatch}
+              apiDelete={apiDelete}
+              showToast={showToast}
               onRefresh={() => {
                 loadAllWorkspaceData();
                 showToast('Bukti Tayang berhasil diperbarui & progres Deal tersinkronisasi.');
@@ -1464,7 +1482,10 @@ export default function App() {
               deals={deals}
               preselectedDealId={preselectedInvDealId}
               permissions={permissions}
+              currentUser={currentUser}
               apiPost={apiPost}
+              apiDelete={apiDelete}
+              showToast={showToast}
               onRefresh={() => {
                 setPreselectedInvDealId(null);
                 loadAllWorkspaceData();
@@ -1482,6 +1503,7 @@ export default function App() {
               companySettings={settingsData?.settings || {}}
               apiGet={apiGet}
               apiPost={apiPost}
+              apiDelete={apiDelete}
               showToast={showToast}
               onRefresh={() => {
                 loadAllWorkspaceData();

@@ -9,6 +9,7 @@ import {
   Plus,
   Printer,
   Receipt,
+  Trash2,
 } from 'lucide-react';
 import {
   formatRupiah,
@@ -24,6 +25,10 @@ interface DealCommandCenterProps {
   selectedDealId: number | null;
   onSelectDeal: (id: number | null) => void;
   permissions: RolePerm[];
+  currentUser?: any;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
+  onRefresh?: () => void;
   onCreateMoFromDeal: (deal: Record<string, any>) => void;
   onCreateInvoiceFromDeal: (deal: Record<string, any>) => void;
   onPrintDocument: (type: PrintableDocType, data: Record<string, any>) => void;
@@ -34,12 +39,20 @@ export const DealCommandCenter: React.FC<DealCommandCenterProps> = ({
   selectedDealId,
   onSelectDeal,
   permissions,
+  currentUser,
+  apiDelete,
+  showToast,
+  onRefresh,
   onCreateMoFromDeal,
   onCreateInvoiceFromDeal,
   onPrintDocument,
 }) => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
 
   const canCreateMo = checkPerm(permissions, 'media_orders', 'create');
   const canCreateInvoice = checkPerm(permissions, 'invoices', 'create');
@@ -107,6 +120,32 @@ export const DealCommandCenter: React.FC<DealCommandCenterProps> = ({
               >
                 <Receipt className="w-3.5 h-3.5" />
                 Buat Invoice Tagihan
+              </button>
+            )}
+            {isManager && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const confirmed = window.confirm(
+                    `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Deal #${activeDeal.nomor} ("${activeDeal.nama_kampanye}")?\n\nPerhatian:\n- Deal yang memiliki Media Order atau Invoice aktif tidak dapat dihapus.\n- Seluruh alokasi kuota dan histori deal ini akan dihapus permanen.\n- Tindakan ini dicatat di Audit Trail.`
+                  );
+                  if (!confirmed) return;
+                  try {
+                    if (apiDelete) {
+                      await apiDelete(`/api/deals/${activeDeal.id}`);
+                      showToast?.(`Deal #${activeDeal.nomor} berhasil dihapus.`);
+                      onSelectDeal(null);
+                      onRefresh?.();
+                    }
+                  } catch (err: any) {
+                    showToast?.(`Gagal menghapus Deal: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                  }
+                }}
+                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Hapus Deal Ini (Otorisasi Minimal Manajer)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Hapus Deal
               </button>
             )}
           </div>
@@ -538,12 +577,39 @@ export const DealCommandCenter: React.FC<DealCommandCenterProps> = ({
                     <span className={getStatusSemanticColor(d.status)}>{d.status}</span>
                   </td>
                   <td className="py-3.5 px-4 text-right">
-                    <button
-                      onClick={() => onSelectDeal(d.id)}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded transition-colors cursor-pointer"
-                    >
-                      Buka Detail Deal
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={() => onSelectDeal(d.id)}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded transition-colors cursor-pointer"
+                      >
+                        Buka Detail Deal
+                      </button>
+                      {isManager && (
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const confirmed = window.confirm(
+                              `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Deal #${d.nomor} ("${d.nama_kampanye}")?\n\nPerhatian:\n- Deal yang memiliki Media Order atau Invoice aktif tidak dapat dihapus.\n- Seluruh alokasi kuota dan histori deal ini akan dihapus permanen.\n- Tindakan ini dicatat di Audit Trail.`
+                            );
+                            if (!confirmed) return;
+                            try {
+                              if (apiDelete) {
+                                await apiDelete(`/api/deals/${d.id}`);
+                                showToast?.(`Deal #${d.nomor} berhasil dihapus.`);
+                                onRefresh?.();
+                              }
+                            } catch (err: any) {
+                              showToast?.(`Gagal menghapus Deal: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                            }
+                          }}
+                          className="p-1.5 hover:bg-rose-50 text-rose-600 rounded transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                          title="Hapus Deal (Otorisasi Minimal Manajer)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

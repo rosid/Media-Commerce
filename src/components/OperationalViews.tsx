@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   Calendar,
@@ -40,9 +40,12 @@ import { PrintableDocType } from './PrintDocumentModal';
 export const ClientsModule: React.FC<{
   clients: Array<Record<string, any>>;
   permissions: RolePerm[];
+  currentUser?: any;
   apiPost: (url: string, body: any) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
   onRefresh: () => void;
-}> = ({ clients, permissions, apiPost, onRefresh }) => {
+}> = ({ clients, permissions, currentUser, apiPost, apiDelete, showToast, onRefresh }) => {
   const [showForm, setShowForm] = useState(false);
   const [nama, setNama] = useState('');
   const [tipe, setTipe] = useState<'brand' | 'agensi'>('brand');
@@ -57,6 +60,9 @@ export const ClientsModule: React.FC<{
   const [teleponPic, setTeleponPic] = useState('');
 
   const canCreate = checkPerm(permissions, 'clients', 'create');
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
   const agencies = clients.filter((c) => c.tipe === 'agensi');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -250,6 +256,7 @@ export const ClientsModule: React.FC<{
               <th className="py-3 px-4 text-left">Kontak PIC Utama</th>
               <th className="py-3 px-4 text-right font-mono">Termin</th>
               <th className="py-3 px-4 text-left">Pemilik (Sales)</th>
+              {isManager && <th className="py-3 px-4 text-right">Aksi</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
@@ -284,6 +291,32 @@ export const ClientsModule: React.FC<{
                     NET {c.termin_hari}
                   </td>
                   <td className="py-3.5 px-4 font-medium text-slate-800">{c.nama_sales}</td>
+                  {isManager && (
+                    <td className="py-3.5 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const confirmed = window.confirm(
+                            `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Master Klien "${c.nama}" (${c.kode})?\n\nPerhatian:\n- Klien yang memiliki riwayat Deal atau Quotation tidak dapat dihapus.\n- Seluruh kontak PIC klien ini akan ikut dihapus.\n- Tindakan ini dicatat di Audit Trail.`
+                          );
+                          if (!confirmed) return;
+                          try {
+                            if (apiDelete) {
+                              await apiDelete(`/api/clients/${c.id}`);
+                              showToast?.(`Klien "${c.nama}" berhasil dihapus.`);
+                              onRefresh();
+                            }
+                          } catch (err: any) {
+                            showToast?.(`Gagal menghapus klien: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                          }
+                        }}
+                        className="p-1.5 hover:bg-rose-50 text-rose-600 rounded transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                        title="Hapus Klien (Otorisasi Minimal Manajer)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -302,12 +335,24 @@ export const CatalogModule: React.FC<{
   packages: Array<Record<string, any>>;
   categories?: Array<Record<string, any>>;
   permissions: RolePerm[];
+  currentUser?: any;
   apiPost: (url: string, body: any) => Promise<any>;
   apiPut?: (url: string, body: any) => Promise<any>;
   apiDelete?: (url: string) => Promise<any>;
   showToast?: (msg: string) => void;
   onRefresh: () => void;
-}> = ({ products, packages, categories = [], permissions, apiPost, apiPut, apiDelete, showToast, onRefresh }) => {
+}> = ({
+  products,
+  packages,
+  categories = [],
+  permissions,
+  currentUser,
+  apiPost,
+  apiPut,
+  apiDelete,
+  showToast,
+  onRefresh,
+}) => {
   const [showNewProd, setShowNewProd] = useState(false);
   const [editingPriceProd, setEditingPriceProd] = useState<Record<string, any> | null>(null);
   const [newPriceVal, setNewPriceVal] = useState('');
@@ -330,6 +375,9 @@ export const CatalogModule: React.FC<{
   const [isSavingCat, setIsSavingCat] = useState(false);
 
   const canUpdate = checkPerm(permissions, 'catalog', 'update');
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
 
   const categoriesList = categories && categories.length > 0
     ? categories
@@ -852,7 +900,7 @@ export const CatalogModule: React.FC<{
               <th className="py-3 px-4 text-left">Tipe Kuota</th>
               <th className="py-3 px-4 text-right font-mono">Harga Publish Aktif</th>
               <th className="py-3 px-4 text-left">Riwayat Versi Harga</th>
-              {canUpdate && <th className="py-3 px-4 text-right">Aksi</th>}
+              {(canUpdate || isManager) && <th className="py-3 px-4 text-right">Aksi</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
@@ -881,17 +929,45 @@ export const CatalogModule: React.FC<{
                     </div>
                   ))}
                 </td>
-                {canUpdate && (
+                {(canUpdate || isManager) && (
                   <td className="py-3.5 px-4 text-right">
-                    <button
-                      onClick={() => {
-                        setEditingPriceProd(p);
-                        setNewPriceVal(String(p.harga_aktif));
-                      }}
-                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-medium rounded cursor-pointer"
-                    >
-                      Update Versi Harga
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      {canUpdate && (
+                        <button
+                          onClick={() => {
+                            setEditingPriceProd(p);
+                            setNewPriceVal(String(p.harga_aktif));
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-medium rounded cursor-pointer"
+                        >
+                          Update Versi Harga
+                        </button>
+                      )}
+                      {isManager && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const confirmed = window.confirm(
+                              `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Produk Rate Card "${p.nama}" (${p.kategori})?\n\nPerhatian:\n- Seluruh riwayat versi harga produk ini akan ikut dihapus.\n- Tindakan ini dicatat di Audit Trail.`
+                            );
+                            if (!confirmed) return;
+                            try {
+                              if (apiDelete) {
+                                await apiDelete(`/api/catalog/products/${p.id}`);
+                                showToast?.(`Produk "${p.nama}" berhasil dihapus.`);
+                                onRefresh();
+                              }
+                            } catch (err: any) {
+                              showToast?.(`Gagal menghapus produk: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                            }
+                          }}
+                          className="p-1.5 hover:bg-rose-50 text-rose-600 rounded transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                          title="Hapus Produk (Otorisasi Minimal Manajer)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 )}
               </tr>
@@ -936,7 +1012,10 @@ export const QuotationsModule: React.FC<{
   products: Array<Record<string, any>>;
   packages: Array<Record<string, any>>;
   permissions: RolePerm[];
+  currentUser?: any;
   apiPost: (url: string, body: any) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
   onRefresh: () => void;
   onPrintDocument: (type: PrintableDocType, data: Record<string, any>) => void;
   onOpenDealDetail: (dealId: number) => void;
@@ -946,7 +1025,10 @@ export const QuotationsModule: React.FC<{
   products,
   packages,
   permissions,
+  currentUser,
   apiPost,
+  apiDelete,
+  showToast,
   onRefresh,
   onPrintDocument,
   onOpenDealDetail,
@@ -957,15 +1039,26 @@ export const QuotationsModule: React.FC<{
   const [dealModalTarget, setDealModalTarget] = useState<Record<string, any> | null>(null);
   const [lostModalTarget, setLostModalTarget] = useState<Record<string, any> | null>(null);
 
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
+
   // Quotation Form States
   const [judulPenawaran, setJudulPenawaran] = useState('');
   const [clientId, setClientId] = useState<string>(clients[0]?.id ? String(clients[0].id) : '1');
+  const [namaSales, setNamaSales] = useState(currentUser?.nama || '');
   const [tanggalTerbit, setTanggalTerbit] = useState('2026-11-08');
   const [berlakuSampai, setBerlakuSampai] = useState('2026-12-08');
   const [diskonTipe, setDiskonTipe] = useState<'persen' | 'nominal'>('persen');
   const [diskonPersen, setDiskonPersen] = useState<number>(0);
   const [diskonNominalInput, setDiskonNominalInput] = useState<number>(0);
   const [catatanRevisi, setCatatanRevisi] = useState('');
+
+  useEffect(() => {
+    if (!namaSales && currentUser?.nama) {
+      setNamaSales(currentUser.nama);
+    }
+  }, [currentUser]);
   const [formItems, setFormItems] = useState<
     Array<{
       product_id: number;
@@ -1050,8 +1143,10 @@ export const QuotationsModule: React.FC<{
 
   const handleCreateOrRevise = async (e: React.FormEvent) => {
     e.preventDefault();
+    const effectiveAe = (namaSales || '').trim() || currentUser?.nama || 'Account Executive';
     if (revisionTarget) {
       await apiPost(`/api/quotations/${revisionTarget.id}/revisions`, {
+        nama_sales: effectiveAe,
         diskon_tipe: diskonTipe,
         diskon_persen: globalDiscPct,
         diskon_nominal: globalDiscNom,
@@ -1063,6 +1158,7 @@ export const QuotationsModule: React.FC<{
       await apiPost('/api/quotations', {
         judul_penawaran: judulPenawaran,
         client_id: Number(clientId),
+        nama_sales: effectiveAe,
         tanggal_terbit: tanggalTerbit,
         berlaku_sampai: berlakuSampai,
         diskon_tipe: diskonTipe,
@@ -1085,6 +1181,7 @@ export const QuotationsModule: React.FC<{
     const av = q.active_version || {};
     setRevisionTarget(q);
     setShowCreate(false);
+    setNamaSales(q.nama_sales || currentUser?.nama || '');
     const avType = (av.diskon_tipe === 'nominal' ? 'nominal' : 'persen') as 'persen' | 'nominal';
     setDiskonTipe(avType);
     setDiskonPersen(Number(av.diskon_persen || 0));
@@ -1146,6 +1243,9 @@ export const QuotationsModule: React.FC<{
           <button
             onClick={() => {
               setRevisionTarget(null);
+              if (!showCreate && currentUser?.nama) {
+                setNamaSales(currentUser.nama);
+              }
               setShowCreate(!showCreate);
             }}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 self-start cursor-pointer"
@@ -1182,10 +1282,10 @@ export const QuotationsModule: React.FC<{
             )}
           </div>
 
-          {!revisionTarget && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="md:col-span-2">
-                <label className="block font-medium text-slate-700 mb-1">Judul Kampanye / Penawaran</label>
+          {!revisionTarget ? (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+              <div className="md:col-span-4">
+                <label className="block font-medium text-slate-700 mb-1">Judul Kampanye / Penawaran *</label>
                 <input
                   type="text"
                   required
@@ -1195,8 +1295,8 @@ export const QuotationsModule: React.FC<{
                   className="w-full px-3 py-2 border border-slate-300 rounded-md"
                 />
               </div>
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Pilih Klien</label>
+              <div className="md:col-span-3">
+                <label className="block font-medium text-slate-700 mb-1">Pilih Klien *</label>
                 <select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
@@ -1209,7 +1309,24 @@ export const QuotationsModule: React.FC<{
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="md:col-span-3">
+                <label className="block font-medium text-slate-700 mb-1">
+                  <span>Account Executive (Sales) *</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={namaSales}
+                  onChange={(e) => setNamaSales(e.target.value)}
+                  placeholder="Nama AE / Sales (bisa freelance)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md bg-white font-medium text-slate-900"
+                  title="Dapat diisi manual nama Account Executive tetap maupun tidak tetap / freelance"
+                />
+                <span className="text-[10px] text-blue-600 block mt-0.5">
+                  Bisa diisi manual (mengakomodir AE tidak tetap / freelance)
+                </span>
+              </div>
+              <div className="md:col-span-2">
                 <label className="block font-medium text-slate-700 mb-1">Masa Berlaku Sampai</label>
                 <input
                   type="date"
@@ -1217,6 +1334,29 @@ export const QuotationsModule: React.FC<{
                   onChange={(e) => setBerlakuSampai(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-md font-mono"
                 />
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-md flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+              <div className="space-y-0.5">
+                <span className="font-semibold text-slate-900">{revisionTarget.judul_penawaran}</span>
+                <div className="text-slate-500">
+                  Klien: <strong className="text-slate-800">{revisionTarget.snapshot_nama_klien}</strong> · Referensi: <span className="font-mono">{revisionTarget.nomor}</span>
+                </div>
+              </div>
+              <div className="w-full md:w-80">
+                <label className="block font-medium text-slate-700 mb-1">
+                  Account Executive (Sales)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={namaSales}
+                  onChange={(e) => setNamaSales(e.target.value)}
+                  placeholder="Nama AE / Sales tidak tetap"
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-md font-medium text-slate-900 bg-white"
+                />
+                <span className="text-[10px] text-blue-600 block mt-0.5">Dapat disesuaikan untuk AE tidak tetap / freelance</span>
               </div>
             </div>
           )}
@@ -1744,6 +1884,30 @@ export const QuotationsModule: React.FC<{
                             </button>
                           </>
                         )}
+                      {isManager && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const confirmed = window.confirm(
+                              `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Quotation #${q.nomor} ("${q.judul_penawaran}")?\n\nPerhatian:\n- Quotation yang sudah menjadi Deal aktif tidak dapat dihapus sebelum Deal dibatalkan.\n- Riwayat seluruh revisi dan item penawaran akan dihapus permanen.\n- Tindakan ini dicatat di Audit Trail.`
+                            );
+                            if (!confirmed) return;
+                            try {
+                              if (apiDelete) {
+                                await apiDelete(`/api/quotations/${q.id}`);
+                                showToast?.(`Quotation #${q.nomor} berhasil dihapus.`);
+                                onRefresh();
+                              }
+                            } catch (err: any) {
+                              showToast?.(`Gagal menghapus quotation: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                            }
+                          }}
+                          className="p-1 hover:bg-rose-50 text-rose-600 rounded transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                          title="Hapus Quotation (Otorisasi Minimal Manajer)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1765,9 +1929,12 @@ export const MediaOrdersModule: React.FC<{
   products: Array<Record<string, any>>;
   preselectedDealId: number | null;
   permissions: RolePerm[];
+  currentUser?: any;
   apiPost: (url: string, body: any) => Promise<any>;
   apiPatch: (url: string, body: any) => Promise<any>;
   apiGet: (url: string) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
   onRefresh: () => void;
   onPrintDocument: (type: PrintableDocType, data: Record<string, any>) => void;
 }> = ({
@@ -1776,14 +1943,21 @@ export const MediaOrdersModule: React.FC<{
   products,
   preselectedDealId,
   permissions,
+  currentUser,
   apiPost,
   apiPatch,
   apiGet,
+  apiDelete,
+  showToast,
   onRefresh,
   onPrintDocument,
 }) => {
   const [showCreate, setShowCreate] = useState<boolean>(Boolean(preselectedDealId));
   const [jenisMo, setJenisMo] = useState<'Reguler' | 'Bonus'>('Reguler');
+
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
   const [selectedDealId, setSelectedDealId] = useState<string>(
     preselectedDealId ? String(preselectedDealId) : deals[0]?.id ? String(deals[0].id) : ''
   );
@@ -2274,14 +2448,39 @@ export const MediaOrdersModule: React.FC<{
                   PIC Media: {mo.pic_internal}
                 </div>
               </div>
-
-              <button
-                onClick={() => onPrintDocument('MEDIA_ORDER', mo)}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-md flex items-center gap-1.5 self-start cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                Cetak PDF MO (A4 Landscape)
-              </button>
+              <div className="flex items-center gap-2 self-start">
+                <button
+                  onClick={() => onPrintDocument('MEDIA_ORDER', mo)}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Cetak PDF MO (A4 Landscape)
+                </button>
+                {isManager && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const confirmed = window.confirm(
+                        `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Media Order #${mo.nomor} ("${mo.nama_kampanye}")?\n\nPerhatian:\n- MO yang sudah memiliki Bukti Tayang atau Invoice terkait harus diselesaikan/dihapus terlebih dahulu.\n- Seluruh jadwal tayang item pada MO ini akan dihapus.\n- Tindakan ini dicatat di Audit Trail.`
+                      );
+                      if (!confirmed) return;
+                      try {
+                        if (apiDelete) {
+                          await apiDelete(`/api/media-orders/${mo.id}`);
+                          showToast?.(`Media Order #${mo.nomor} berhasil dihapus.`);
+                          onRefresh();
+                        }
+                      } catch (err: any) {
+                        showToast?.(`Gagal menghapus Media Order: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                      }
+                    }}
+                    className="p-2 hover:bg-rose-50 text-rose-600 rounded-md transition-colors cursor-pointer border border-slate-200 hover:border-rose-200"
+                    title="Hapus Media Order (Otorisasi Minimal Manajer)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -2367,9 +2566,22 @@ export const ProofsModule: React.FC<{
   currentUser: Record<string, any>;
   apiPost: (url: string, body: any) => Promise<any>;
   apiPatch?: (url: string, body: any) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
   onRefresh: () => void;
   onPrintDocument: (type: PrintableDocType, data: Record<string, any>) => void;
-}> = ({ proofs, mediaOrders, permissions, currentUser, apiPost, apiPatch, onRefresh, onPrintDocument }) => {
+}> = ({
+  proofs,
+  mediaOrders,
+  permissions,
+  currentUser,
+  apiPost,
+  apiPatch,
+  apiDelete,
+  showToast,
+  onRefresh,
+  onPrintDocument,
+}) => {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedMoId, setSelectedMoId] = useState<string>(mediaOrders[0]?.id ? String(mediaOrders[0].id) : '1');
   const [periodeLaporan, setPeriodeLaporan] = useState('01 Nov 2026 - 15 Nov 2026');
@@ -2382,6 +2594,9 @@ export const ProofsModule: React.FC<{
   const canVerify =
     checkPerm(permissions, 'proofs', 'approve') ||
     ['manager', 'admin', 'super_admin'].includes(currentUser.role_kode);
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
 
   const selectedMo = mediaOrders.find((m) => String(m.id) === String(selectedMoId));
   const [itemProofInputs, setItemProofInputs] = useState<
@@ -2794,6 +3009,30 @@ export const ProofsModule: React.FC<{
                   <Printer className="w-3.5 h-3.5" />
                   Cetak PDF Bukti Tayang
                 </button>
+                {isManager && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const confirmed = window.confirm(
+                        `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Bukti Tayang #${pr.nomor} ("${pr.nama_kampanye}")?\n\nPerhatian:\n- Bukti tayang yang sudah terhubung dengan invoice aktif harus diselesaikan terlebih dahulu.\n- Seluruh lampiran screenshot dan URL live bukti tayang akan dihapus.\n- Tindakan ini dicatat di Audit Trail.`
+                      );
+                      if (!confirmed) return;
+                      try {
+                        if (apiDelete) {
+                          await apiDelete(`/api/proofs/${pr.id}`);
+                          showToast?.(`Bukti Tayang #${pr.nomor} berhasil dihapus.`);
+                          onRefresh();
+                        }
+                      } catch (err: any) {
+                        showToast?.(`Gagal menghapus Bukti Tayang: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                      }
+                    }}
+                    className="p-2 hover:bg-rose-50 text-rose-600 rounded-md transition-colors cursor-pointer border border-slate-200 hover:border-rose-200"
+                    title="Hapus Bukti Tayang (Otorisasi Minimal Manajer)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2901,11 +3140,28 @@ export const InvoicesModule: React.FC<{
   deals: Array<Record<string, any>>;
   preselectedDealId: number | null;
   permissions: RolePerm[];
+  currentUser?: any;
   apiPost: (url: string, body: any) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
+  showToast?: (msg: string) => void;
   onRefresh: () => void;
   onPrintDocument: (type: PrintableDocType, data: Record<string, any>) => void;
-}> = ({ invoices, deals, preselectedDealId, permissions, apiPost, onRefresh, onPrintDocument }) => {
+}> = ({
+  invoices,
+  deals,
+  preselectedDealId,
+  permissions,
+  currentUser,
+  apiPost,
+  apiDelete,
+  showToast,
+  onRefresh,
+  onPrintDocument,
+}) => {
   const [showCreate, setShowCreate] = useState<boolean>(Boolean(preselectedDealId));
+  const isManager =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
   const [selectedDealId, setSelectedDealId] = useState<string>(
     preselectedDealId ? String(preselectedDealId) : deals[0]?.id ? String(deals[0].id) : ''
   );
@@ -3260,6 +3516,30 @@ export const InvoicesModule: React.FC<{
                           className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded cursor-pointer"
                         >
                           Catat Bayar
+                        </button>
+                      )}
+                      {isManager && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const confirmed = window.confirm(
+                              `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Invoice #${inv.nomor} (${formatRupiah(inv.total_tagihan)})?\n\nPerhatian:\n- Invoice yang sudah memiliki catatan Kwitansi/Pembayaran harus dihapus kwitansinya terlebih dahulu.\n- Seluruh rincian item invoice ini akan dihapus permanen.\n- Tindakan ini dicatat di Audit Trail.`
+                            );
+                            if (!confirmed) return;
+                            try {
+                              if (apiDelete) {
+                                await apiDelete(`/api/invoices/${inv.id}`);
+                                showToast?.(`Invoice #${inv.nomor} berhasil dihapus.`);
+                                onRefresh();
+                              }
+                            } catch (err: any) {
+                              showToast?.(`Gagal menghapus invoice: ${err?.message || 'Terjadi kesalahan sistem'}`);
+                            }
+                          }}
+                          className="p-1 hover:bg-rose-50 text-rose-600 rounded transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                          title="Hapus Invoice (Otorisasi Minimal Manajer)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>

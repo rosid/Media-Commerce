@@ -342,6 +342,7 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
       snapshot_alamat TEXT NOT NULL,
       snapshot_pic TEXT NOT NULL,
       owner_user_id INTEGER NOT NULL REFERENCES users(id),
+      nama_sales TEXT,
       status TEXT NOT NULL DEFAULT 'Draft', -- 'Draft', 'Menunggu Persetujuan', 'Terkirim', 'Negosiasi', 'Deal', 'Lost', 'Expired'
       tanggal_terbit TEXT NOT NULL,
       berlaku_sampai TEXT NOT NULL,
@@ -396,6 +397,7 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
       client_id INTEGER NOT NULL REFERENCES clients(id),
       snapshot_nama_klien TEXT NOT NULL,
       owner_user_id INTEGER NOT NULL REFERENCES users(id),
+      nama_sales TEXT,
       nama_kampanye TEXT NOT NULL,
       no_po_klien TEXT,
       nilai_deal REAL NOT NULL,
@@ -652,6 +654,18 @@ export function initDatabase(mode: 'clean' | 'sample' = 'clean') {
   const qvCols = (db.prepare('PRAGMA table_info(quotation_versions)').all() as Array<{ name: string }>).map((c) => c.name);
   if (!qvCols.includes('diskon_tipe')) {
     db.exec(`ALTER TABLE quotation_versions ADD COLUMN diskon_tipe TEXT NOT NULL DEFAULT 'persen';`);
+  }
+
+  // Ensure nama_sales exists in quotations (to support manual/non-permanent AE)
+  const qCols = (db.prepare('PRAGMA table_info(quotations)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!qCols.includes('nama_sales')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN nama_sales TEXT;`);
+  }
+
+  // Ensure nama_sales exists in deals
+  const dCols = (db.prepare('PRAGMA table_info(deals)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!dCols.includes('nama_sales')) {
+    db.exec(`ALTER TABLE deals ADD COLUMN nama_sales TEXT;`);
   }
 
   // Ensure Kwitansi (Receipt) columns exist in payments

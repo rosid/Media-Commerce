@@ -47,6 +47,11 @@ interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
+export function isManagerOrAbove(user?: AuthUser): boolean {
+  if (!user) return false;
+  return user.role_id === 1 || ['super_admin', 'admin', 'direktur', 'manager'].includes(user.role_kode);
+}
+
 initDatabase();
 
 function pushNotification(
@@ -181,7 +186,7 @@ function authenticateJWT(req: AuthRequest, res: Response, next: NextFunction) {
 function getDealWithProgress(dealId: number): Record<string, any> | null {
   const deal = db
     .prepare(`
-      SELECT d.*, q.nomor as nomor_quotation, u.nama as nama_sales, c.npwp as npwp_klien, c.alamat_tagih as alamat_klien, c.termin_hari
+      SELECT d.*, q.nomor as nomor_quotation, COALESCE(NULLIF(d.nama_sales, ''), NULLIF(q.nama_sales, ''), u.nama) as nama_sales, c.npwp as npwp_klien, c.alamat_tagih as alamat_klien, c.termin_hari
       FROM deals d
       JOIN quotations q ON q.id = d.quotation_id
       JOIN users u ON u.id = d.owner_user_id
@@ -1108,7 +1113,7 @@ async function startServer() {
     // Filter Quotations & Deals by Ownership Scope
     let allQuotations = db
       .prepare(`
-        SELECT q.*, u.nama as nama_sales, qv.grand_total, qv.diskon_persen
+        SELECT q.*, COALESCE(NULLIF(q.nama_sales, ''), u.nama) as nama_sales, qv.grand_total, qv.diskon_persen
         FROM quotations q
         JOIN users u ON u.id = q.owner_user_id
         LEFT JOIN quotation_versions qv ON qv.quotation_id = q.id AND qv.nomor_revisi = q.versi_aktif
@@ -1560,7 +1565,7 @@ async function startServer() {
 
     let quotations = db
       .prepare(`
-        SELECT q.*, u.nama as nama_sales
+        SELECT q.*, COALESCE(NULLIF(q.nama_sales, ''), u.nama) as nama_sales
         FROM quotations q
         JOIN users u ON u.id = q.owner_user_id
         ORDER BY q.id DESC
@@ -1609,6 +1614,7 @@ async function startServer() {
     const {
       judul_penawaran,
       client_id,
+      nama_sales,
       tanggal_terbit,
       berlaku_sampai,
       diskon_tipe,
@@ -1678,14 +1684,15 @@ async function startServer() {
     const initialStatus = requiresApproval ? 'Menunggu Persetujuan' : 'Terkirim';
 
     const nomor = generateDocumentNumber('QT', tanggal_terbit);
+    const effectiveSalesName = (nama_sales || '').trim() || user.nama;
 
     const tx = db.transaction(() => {
       const qRes = db
         .prepare(`
           INSERT INTO quotations (
             nomor, judul_penawaran, client_id, snapshot_nama_klien, snapshot_npwp, snapshot_alamat, snapshot_pic,
-            owner_user_id, status, tanggal_terbit, berlaku_sampai, versi_aktif, catatan_followup
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            owner_user_id, nama_sales, status, tanggal_terbit, berlaku_sampai, versi_aktif, catatan_followup
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         `)
         .run(
           nomor,
@@ -1696,6 +1703,7 @@ async function startServer() {
           client.alamat_tagih,
           contact?.nama_pic || 'PIC Klien',
           user.id,
+          effectiveSalesName,
           initialStatus,
           tanggal_terbit || '2026-11-08',
           berlaku_sampai || '2026-12-08',
@@ -1795,7 +1803,7 @@ async function startServer() {
       return;
     }
 
-    const { diskon_tipe, diskon_persen, diskon_nominal, catatan_revisi, items } = req.body;
+    const { nama_sales, diskon_tipe, diskon_persen, diskon_nominal, catatan_revisi, items } = req.body;
     const nextRev = Number(quotation.versi_aktif) + 1;
 
     let subtotal = 0;
@@ -1883,7 +1891,11 @@ async function startServer() {
         );
       }
 
-      db.prepare('UPDATE quotations SET versi_aktif = ?, status = ? WHERE id = ?').run(nextRev, newStatus, quotationId);
+      if (nama_sales && String(nama_sales).trim()) {
+        db.prepare('UPDATE quotations SET versi_aktif = ?, status = ?, nama_sales = ? WHERE id = ?').run(nextRev, newStatus, String(nama_sales).trim(), quotationId);
+      } else {
+        db.prepare('UPDATE quotations SET versi_aktif = ?, status = ? WHERE id = ?').run(nextRev, newStatus, quotationId);
+      }
 
       if (requiresApproval) {
         db.prepare(`
@@ -1971,9 +1983,9 @@ async function startServer() {
         const dRes = db
           .prepare(`
             INSERT INTO deals (
-              nomor, quotation_id, quotation_version_id, client_id, snapshot_nama_klien, owner_user_id,
+              nomor, quotation_id, quotation_version_id, client_id, snapshot_nama_klien, owner_user_id, nama_sales,
               nama_kampanye, no_po_klien, nilai_deal, dpp, ppn_nominal, mulai_kontrak, berlaku_sampai, skema_tagih, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Belum Dimulai')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Belum Dimulai')
           `)
           .run(
             dealNomor,
@@ -1982,6 +1994,7 @@ async function startServer() {
             quotation.client_id,
             quotation.snapshot_nama_klien,
             quotation.owner_user_id,
+            quotation.nama_sales || user.nama,
             quotation.judul_penawaran,
             no_po_klien || 'PO-MENYUSUL',
             activeVersion.grand_total,
@@ -2887,6 +2900,332 @@ async function startServer() {
       total_dibayar: totalDibayarBaru,
       message: `Kwitansi ${nomorKwitansi} berhasil diterbitkan.`
     });
+  });
+
+  // ============================================================================
+  // DELETION ENDPOINTS (Restricted to Manager Level & Above)
+  // ============================================================================
+
+  // 1. Delete Kwitansi / Payment Receipt
+  app.delete('/api/receipts/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus kwitansi hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const receiptId = Number(req.params.id);
+    const payment = db.prepare(`
+      SELECT py.*, inv.nomor as nomor_invoice, inv.total_dibayar as inv_total_dibayar, inv.total_tagihan as inv_total_tagihan
+      FROM payments py
+      JOIN invoices inv ON inv.id = py.invoice_id
+      WHERE py.id = ?
+    `).get(receiptId) as any;
+
+    if (!payment) {
+      res.status(404).json({ error: 'Data Kwitansi tidak ditemukan.' });
+      return;
+    }
+
+    const bayarKurang = Number(payment.jumlah || 0);
+    const newTotalDibayar = Math.max(0, Number(payment.inv_total_dibayar || 0) - bayarKurang);
+    const newStatus = newTotalDibayar <= 0 ? 'Terkirim' : (newTotalDibayar >= Number(payment.inv_total_tagihan) ? 'Lunas' : 'Dibayar Sebagian');
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM payments WHERE id = ?').run(receiptId);
+      db.prepare('UPDATE invoices SET total_dibayar = ?, status = ? WHERE id = ?').run(newTotalDibayar, newStatus, payment.invoice_id);
+    })();
+
+    logAudit(
+      user,
+      'Kwitansi & Pembayaran',
+      'DELETE_RECEIPT',
+      payment.nomor_kwitansi || `ID #${receiptId}`,
+      `Menghapus Kwitansi ${payment.nomor_kwitansi} senilai Rp ${bayarKurang.toLocaleString('id-ID')} pada Invoice ${payment.nomor_invoice}. Sisa tagihan dikembalikan, status invoice: ${newStatus}.`,
+      payment,
+      null
+    );
+
+    res.json({
+      success: true,
+      message: `Kwitansi ${payment.nomor_kwitansi} berhasil dihapus. Status tagihan invoice telah dikembalikan.`
+    });
+  });
+
+  // 2. Delete Invoice
+  app.delete('/api/invoices/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus invoice hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const invoiceId = Number(req.params.id);
+    const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
+    if (!inv) {
+      res.status(404).json({ error: 'Invoice tidak ditemukan.' });
+      return;
+    }
+
+    const payCount = (db.prepare('SELECT count(*) as c FROM payments WHERE invoice_id = ?').get(invoiceId) as any)?.c || 0;
+    if (payCount > 0) {
+      res.status(400).json({ error: `Invoice ${inv.nomor} tidak dapat dihapus karena sudah memiliki ${payCount} bukti Kwitansi pembayaran. Hapus Kwitansi terkait terlebih dahulu.` });
+      return;
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+    })();
+
+    logAudit(
+      user,
+      'Invoice & Penagihan',
+      'DELETE_INVOICE',
+      inv.nomor,
+      `Menghapus Invoice ${inv.nomor} senilai Rp ${Number(inv.total_tagihan).toLocaleString('id-ID')}`,
+      inv,
+      null
+    );
+
+    res.json({ success: true, message: `Invoice ${inv.nomor} berhasil dihapus.` });
+  });
+
+  // 3. Delete Proof of Performance (Bukti Tayang)
+  app.delete('/api/proofs/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus bukti tayang hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const proofId = Number(req.params.id);
+    const proof = db.prepare('SELECT * FROM proofs WHERE id = ?').get(proofId) as any;
+    if (!proof) {
+      res.status(404).json({ error: 'Bukti Tayang tidak ditemukan.' });
+      return;
+    }
+
+    const linkedInv = db.prepare('SELECT nomor FROM invoices WHERE proof_id = ?').get(proofId) as any;
+    if (linkedInv) {
+      res.status(400).json({ error: `Bukti Tayang ${proof.nomor} terhubung ke Invoice ${linkedInv.nomor}. Hapus Invoice tersebut terlebih dahulu.` });
+      return;
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM proof_items WHERE proof_id = ?').run(proofId);
+      db.prepare('DELETE FROM proofs WHERE id = ?').run(proofId);
+    })();
+
+    logAudit(
+      user,
+      'Bukti Tayang',
+      'DELETE_PROOF',
+      proof.nomor,
+      `Menghapus Dokumen Bukti Tayang ${proof.nomor} (${proof.nama_acara_kampanye || '-'})`,
+      proof,
+      null
+    );
+
+    res.json({ success: true, message: `Bukti Tayang ${proof.nomor} berhasil dihapus.` });
+  });
+
+  // 4. Delete Media Order (MO)
+  app.delete('/api/media-orders/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus Media Order hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const moId = Number(req.params.id);
+    const mo = db.prepare('SELECT * FROM media_orders WHERE id = ?').get(moId) as any;
+    if (!mo) {
+      res.status(404).json({ error: 'Media Order tidak ditemukan.' });
+      return;
+    }
+
+    const linkedProof = db.prepare('SELECT nomor FROM proofs WHERE mo_id = ?').get(moId) as any;
+    if (linkedProof) {
+      res.status(400).json({ error: `Media Order ${mo.nomor} tidak dapat dihapus karena sudah memiliki Bukti Tayang ${linkedProof.nomor}. Hapus Bukti Tayang terlebih dahulu.` });
+      return;
+    }
+
+    const linkedInv = db.prepare('SELECT nomor FROM invoices WHERE mo_id = ?').get(moId) as any;
+    if (linkedInv) {
+      res.status(400).json({ error: `Media Order ${mo.nomor} tidak dapat dihapus karena sudah memiliki Invoice ${linkedInv.nomor}. Hapus Invoice terlebih dahulu.` });
+      return;
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM mo_items WHERE mo_id = ?').run(moId);
+      db.prepare('DELETE FROM media_orders WHERE id = ?').run(moId);
+    })();
+
+    logAudit(
+      user,
+      'Media Order (MO)',
+      'DELETE_MO',
+      mo.nomor,
+      `Menghapus Media Order ${mo.nomor}`,
+      mo,
+      null
+    );
+
+    res.json({ success: true, message: `Media Order ${mo.nomor} berhasil dihapus.` });
+  });
+
+  // 5. Delete Deal
+  app.delete('/api/deals/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus paket deal hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const dealId = Number(req.params.id);
+    const deal = db.prepare('SELECT * FROM deals WHERE id = ?').get(dealId) as any;
+    if (!deal) {
+      res.status(404).json({ error: 'Paket Deal tidak ditemukan.' });
+      return;
+    }
+
+    const moCount = (db.prepare('SELECT count(*) as c FROM media_orders WHERE deal_id = ?').get(dealId) as any)?.c || 0;
+    const invCount = (db.prepare('SELECT count(*) as c FROM invoices WHERE deal_id = ?').get(dealId) as any)?.c || 0;
+    if (moCount > 0 || invCount > 0) {
+      res.status(400).json({ error: `Deal ${deal.nomor} tidak dapat dihapus karena masih memiliki ${moCount} Media Order dan ${invCount} Invoice aktif. Hapus dokumen turunannya terlebih dahulu.` });
+      return;
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM deal_quotas WHERE deal_id = ?').run(dealId);
+      db.prepare('DELETE FROM deal_timeline_events WHERE deal_id = ?').run(dealId);
+      db.prepare('DELETE FROM deals WHERE id = ?').run(dealId);
+    })();
+
+    logAudit(
+      user,
+      'Paket Deal & Kuota',
+      'DELETE_DEAL',
+      deal.nomor,
+      `Menghapus Paket Deal ${deal.nomor} (${deal.nama_kampanye || '-'}) senilai Rp ${Number(deal.nilai_deal).toLocaleString('id-ID')}`,
+      deal,
+      null
+    );
+
+    res.json({ success: true, message: `Paket Deal ${deal.nomor} berhasil dihapus.` });
+  });
+
+  // 6. Delete Quotation
+  app.delete('/api/quotations/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus quotation hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const qId = Number(req.params.id);
+    const q = db.prepare('SELECT * FROM quotations WHERE id = ?').get(qId) as any;
+    if (!q) {
+      res.status(404).json({ error: 'Quotation tidak ditemukan.' });
+      return;
+    }
+
+    const deal = db.prepare('SELECT nomor FROM deals WHERE quotation_id = ?').get(qId) as any;
+    if (deal) {
+      res.status(400).json({ error: `Quotation ${q.nomor} telah dikonversi menjadi Deal ${deal.nomor}. Hapus Deal terkait terlebih dahulu.` });
+      return;
+    }
+
+    db.transaction(() => {
+      const versions = db.prepare('SELECT id FROM quotation_versions WHERE quotation_id = ?').all(qId) as any[];
+      for (const v of versions) {
+        db.prepare('DELETE FROM quotation_items WHERE quotation_version_id = ?').run(v.id);
+      }
+      db.prepare('DELETE FROM quotation_versions WHERE quotation_id = ?').run(qId);
+      db.prepare('DELETE FROM quotations WHERE id = ?').run(qId);
+    })();
+
+    logAudit(
+      user,
+      'Quotation',
+      'DELETE_QUOTATION',
+      q.nomor,
+      `Menghapus Dokumen Quotation ${q.nomor} (${q.judul_penawaran || '-'})`,
+      q,
+      null
+    );
+
+    res.json({ success: true, message: `Quotation ${q.nomor} berhasil dihapus.` });
+  });
+
+  // 7. Delete Client
+  app.delete('/api/clients/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus klien hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const clientId = Number(req.params.id);
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId) as any;
+    if (!client) {
+      res.status(404).json({ error: 'Klien tidak ditemukan.' });
+      return;
+    }
+
+    const dealCount = (db.prepare('SELECT count(*) as c FROM deals WHERE client_id = ?').get(clientId) as any)?.c || 0;
+    if (dealCount > 0) {
+      res.status(400).json({ error: `Klien ${client.nama} tidak dapat dihapus karena memiliki riwayat ${dealCount} Paket Deal.` });
+      return;
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM client_contacts WHERE client_id = ?').run(clientId);
+      db.prepare('DELETE FROM clients WHERE id = ?').run(clientId);
+    })();
+
+    logAudit(
+      user,
+      'Master Klien',
+      'DELETE_CLIENT',
+      client.nama,
+      `Menghapus Master Klien: ${client.nama} (NPWP: ${client.npwp || '-'})`,
+      client,
+      null
+    );
+
+    res.json({ success: true, message: `Klien ${client.nama} berhasil dihapus.` });
+  });
+
+  // 8. Delete Product Rate Card
+  app.delete('/api/catalog/products/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (!isManagerOrAbove(user)) {
+      res.status(403).json({ error: 'Akses ditolak: Fitur hapus rate card hanya dapat dilakukan oleh level minimal Manajer atau Direksi.' });
+      return;
+    }
+
+    const prodId = Number(req.params.id);
+    const prod = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId) as any;
+    if (!prod) {
+      res.status(404).json({ error: 'Item produk tidak ditemukan.' });
+      return;
+    }
+
+    db.prepare('DELETE FROM products WHERE id = ?').run(prodId);
+
+    logAudit(
+      user,
+      'Katalog & Rate Card',
+      'DELETE_PRODUCT',
+      prod.nama,
+      `Menghapus item produk rate card: ${prod.nama} (${prod.kategori})`,
+      prod,
+      null
+    );
+
+    res.json({ success: true, message: `Produk ${prod.nama} berhasil dihapus.` });
   });
 
   // ============================================================================

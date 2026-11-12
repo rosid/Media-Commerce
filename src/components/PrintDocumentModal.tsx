@@ -200,7 +200,7 @@ export const PrintDocumentModal: React.FC<PrintDocumentModalProps> = ({
                 </div>
                 <div>
                   <span className="text-slate-500">Account Executive (Sales): </span>
-                  <span className="font-medium text-slate-900">{data.nama_sales}</span>
+                  <span className="font-semibold text-slate-900">{data.nama_sales || data.pembuat_nama || '-'}</span>
                 </div>
                 <div>
                   <span className="text-slate-500">Revisi Aktif: </span>

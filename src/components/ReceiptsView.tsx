@@ -19,6 +19,7 @@ import {
   ExternalLink,
   X,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import {
   formatRupiah,
@@ -35,6 +36,7 @@ interface ReceiptsModuleProps {
   companySettings?: Record<string, any>;
   apiGet?: (url: string) => Promise<any>;
   apiPost?: (url: string, body: any) => Promise<any>;
+  apiDelete?: (url: string) => Promise<any>;
   showToast?: (msg: string) => void;
   onRefresh: () => void;
   onOpenPrintModal: (receiptData: Record<string, any>) => void;
@@ -47,6 +49,7 @@ export const ReceiptsModule: React.FC<ReceiptsModuleProps> = ({
   companySettings,
   apiGet,
   apiPost,
+  apiDelete,
   showToast,
   onRefresh,
   onOpenPrintModal,
@@ -79,6 +82,33 @@ export const ReceiptsModule: React.FC<ReceiptsModuleProps> = ({
     currentUser?.role_kode === 'admin' ||
     currentUser?.role_kode === 'finance' ||
     currentUser?.role_kode === 'direktur';
+
+  // Fitur Hapus Kwitansi (Otorisasi Minimal Level Manajer: super_admin, admin, direktur, manager)
+  const canDelete =
+    currentUser?.role_id === 1 ||
+    ['super_admin', 'admin', 'direktur', 'manager'].includes(currentUser?.role_kode);
+
+  const handleDeleteReceipt = async (r: Record<string, any>) => {
+    if (!canDelete) {
+      showToast?.('Akses Ditolak: Fitur hapus hanya diizinkan untuk level minimal Manajer.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Peringatan Otorisasi Manajer:\n\nApakah Anda yakin ingin MENGHAPUS Kwitansi #${r.nomor_kwitansi} (${formatRupiah(r.jumlah)})?\n\nKonsekuensi:\n1. Total terbayar pada invoice #${r.nomor_invoice || ''} akan otomatis disesuaikan kembali.\n2. Status invoice akan dikembalikan ke Terkirim / Dibayar Sebagian.\n3. Tindakan ini dicatat secara permanen di Audit Trail.`
+    );
+    if (!confirmed) return;
+
+    try {
+      if (apiDelete) {
+        await apiDelete(`/api/receipts/${r.id}`);
+        showToast?.(`Kwitansi #${r.nomor_kwitansi} berhasil dihapus.`);
+        loadReceipts();
+        onRefresh();
+      }
+    } catch (err: any) {
+      showToast?.(`Gagal menghapus kwitansi: ${err?.message || 'Terjadi kesalahan sistem'}`);
+    }
+  };
 
   const loadReceipts = async () => {
     if (!apiGet) return;
@@ -559,6 +589,17 @@ Status       : LUNAS / DITERIMA`;
                             <Copy className="w-3.5 h-3.5" />
                           )}
                         </button>
+
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteReceipt(r)}
+                            className="p-1.5 hover:bg-rose-50 text-rose-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                            title="Hapus Kwitansi (Otorisasi Minimal Manajer)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
