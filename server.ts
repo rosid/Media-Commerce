@@ -342,16 +342,53 @@ async function startServer() {
   });
 
   // Helper: Check if installation is already locked
-  // The system is ONLY considered installed and locked when settings.app_installed is explicitly 'true'.
-  // This allows fresh VPS deployments to run the setup wizard cleanly without being blocked by table existence.
+  // The system is considered installed when app_installed is 'true' OR an active Superadmin user exists.
   function isInstallationLocked(): boolean {
     try {
       const st = db.prepare("SELECT nilai FROM settings WHERE kunci = 'app_installed'").get() as any;
-      return st?.nilai === 'true';
+      if (st?.nilai === 'true') return true;
+      const sa = db.prepare('SELECT count(*) as c FROM users WHERE role_id = 1 AND aktif = 1').get() as any;
+      if ((sa?.c || 0) > 0) {
+        try {
+          db.prepare("INSERT INTO settings (kunci, nilai) VALUES ('app_installed', 'true') ON CONFLICT(kunci) DO UPDATE SET nilai = 'true'").run();
+        } catch {}
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
+
+  // Client Info: Detect IP & Geographic Location based on request headers / proxy
+  app.get('/api/client-info', (req: Request, res: Response) => {
+    const forwarded = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
+    const cfIp = req.headers['cf-connecting-ip'] as string;
+    const realIp = req.headers['x-real-ip'] as string;
+    let ip = cfIp || forwarded || realIp || req.socket.remoteAddress || req.ip || '127.0.0.1';
+    ip = ip.replace(/^::ffff:/, '');
+
+    const cfCity = req.headers['cf-ipcity'] as string;
+    const cfCountry = req.headers['cf-ipcountry'] as string;
+    const cfRegion = req.headers['cf-region'] as string;
+
+    let location = '';
+    if (cfCity && cfCountry) {
+      location = `${cfCity}, ${cfCountry}`;
+    } else if (cfCountry) {
+      location = cfCountry === 'ID' ? 'Indonesia' : cfCountry;
+    } else if (cfRegion) {
+      location = `${cfRegion}, Indonesia`;
+    }
+
+    const installed = isInstallationLocked();
+
+    res.json({
+      ip,
+      location: location || (['127.0.0.1', '::1', 'localhost'].includes(ip) ? 'Lokal (Server Development)' : 'Indonesia'),
+      installed,
+    });
+  });
 
   // --- INSTALL WIZARD API ENDPOINTS ---
   app.get('/api/install/status', (_req: Request, res: Response) => {

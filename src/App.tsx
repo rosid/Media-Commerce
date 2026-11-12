@@ -107,8 +107,13 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  // Install Wizard State
+  // Install Wizard & System State
   const [showInstallWizard, setShowInstallWizard] = useState<boolean>(false);
+  const [isSystemInstalled, setIsSystemInstalled] = useState<boolean>(true);
+  const [clientInfo, setClientInfo] = useState<{ ip: string; location: string }>({
+    ip: 'Mendeteksi...',
+    location: 'Mendeteksi...',
+  });
 
   // Navigation & View State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -350,11 +355,56 @@ export default function App() {
     fetch('/api/install/status')
       .then((r) => r.json())
       .then((d) => {
-        if (d && d.installed === false) {
-          setShowInstallWizard(true);
+        if (d) {
+          setIsSystemInstalled(Boolean(d.installed));
+          if (d.installed === false) {
+            setShowInstallWizard(true);
+          }
         }
       })
       .catch(() => {});
+
+    // Fetch client IP & Location
+    fetch('/api/client-info')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.ip) {
+          setClientInfo({
+            ip: d.ip,
+            location: d.location || 'Indonesia',
+          });
+          if (d.installed !== undefined) {
+            setIsSystemInstalled(Boolean(d.installed));
+          }
+        }
+      })
+      .catch(() => {});
+
+    // Browser geo-lookup for public IP resolution
+    fetch('https://ipapi.co/json/')
+      .then((r) => r.json())
+      .then((geo) => {
+        if (geo?.ip) {
+          const locParts = [geo.city, geo.region, geo.country_name].filter(Boolean);
+          setClientInfo({
+            ip: geo.ip,
+            location: locParts.join(', ') || 'Indonesia',
+          });
+        }
+      })
+      .catch(() => {
+        fetch('https://api.country.is')
+          .then((r) => r.json())
+          .then((c) => {
+            if (c?.ip) {
+              setClientInfo((prev) => ({
+                ip: c.ip || prev.ip,
+                location: c.country === 'ID' ? 'Indonesia' : c.country || prev.location || 'Indonesia',
+              }));
+            }
+          })
+          .catch(() => {});
+      });
   }, []);
 
   // Synchronize Document Head with Web & SEO Settings
@@ -709,16 +759,19 @@ export default function App() {
               </div>
             )}
 
-            <div className="pt-2.5">
-              <button
-                type="button"
-                onClick={() => setShowInstallWizard(true)}
-                className="w-full py-2 px-3 bg-blue-50/80 hover:bg-blue-100/90 text-blue-700 font-semibold rounded-lg text-xs flex items-center justify-center gap-2 border border-blue-200 transition-colors cursor-pointer"
-              >
-                <Server className="w-3.5 h-3.5" />
-                <span>Buka Install Wizard & Cek Lingkungan VPS</span>
-              </button>
-            </div>
+            {/* Tombol Install Wizard: Hanya tampil jika sistem belum diinstall */}
+            {!isSystemInstalled && (
+              <div className="pt-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowInstallWizard(true)}
+                  className="w-full py-2 px-3 bg-blue-50/80 hover:bg-blue-100/90 text-blue-700 font-semibold rounded-lg text-xs flex items-center justify-center gap-2 border border-blue-200 transition-colors cursor-pointer"
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>Buka Install Wizard & Cek Lingkungan VPS</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right Column: Demo Switcher or Production System Information */}
@@ -750,6 +803,24 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+
+                <div className="mt-4 p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Status Server:</span>
+                    <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      Aktif & Aman
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">IP Anda:</span>
+                    <span className="font-mono text-slate-200">{clientInfo.ip}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Lokasi Anda:</span>
+                    <span className="text-slate-200">{clientInfo.location}</span>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="space-y-5 my-auto">
@@ -772,12 +843,12 @@ export default function App() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-slate-300">
-                    <span className="text-slate-400">Penyimpanan:</span>
-                    <span className="font-mono text-slate-200">SQLite WAL Persistent</span>
+                    <span className="text-slate-400">IP Anda:</span>
+                    <span className="font-mono text-slate-200">{clientInfo.ip}</span>
                   </div>
                   <div className="flex items-center justify-between text-slate-300">
-                    <span className="text-slate-400">Keamanan Sesi:</span>
-                    <span className="text-slate-200">JWT Token Expiry (24h)</span>
+                    <span className="text-slate-400">Lokasi Anda:</span>
+                    <span className="text-slate-200">{clientInfo.location}</span>
                   </div>
                 </div>
               </div>
@@ -1041,46 +1112,33 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <div className="p-4 border-t border-slate-800 space-y-3 text-xs">
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">
-                Simulasi Beralih Peran (7 Role RBAC):
-              </label>
-              <select
-                value={currentUser.id}
-                onChange={(e) => handleQuickRoleSwitch(Number(e.target.value))}
-                className="w-full px-2.5 py-2 bg-slate-800 border border-slate-700 rounded-md text-xs text-white font-medium cursor-pointer"
-              >
-                {demoAccounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    [{acc.role_nama}] {acc.nama}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-[11px] text-slate-400">
+          <div className="p-3.5 border-t border-slate-800 text-xs">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
               <button
                 type="button"
                 onClick={() => setActiveTab('account')}
                 title="Buka Pengaturan Akun Saya"
-                className="flex items-center gap-2.5 truncate pr-2 text-left hover:opacity-90 cursor-pointer"
+                className="flex items-center gap-2.5 truncate pr-2 text-left hover:opacity-90 cursor-pointer flex-1 min-w-0"
               >
                 {currentUser.avatar_url ? (
                   <img
                     src={currentUser.avatar_url}
                     alt={currentUser.nama}
                     referrerPolicy="no-referrer"
-                    className="w-7 h-7 rounded-full object-cover border border-slate-600 shrink-0"
+                    className="w-8 h-8 rounded-full object-cover border border-slate-600 shrink-0"
                   />
                 ) : (
-                  <span className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
+                  <span className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
                     {userInitials}
                   </span>
                 )}
-                <div className="truncate">
+                <div className="truncate min-w-0">
                   <div className="font-semibold text-slate-200 truncate">{currentUser.nama}</div>
-                  <div className="truncate">{currentUser.email}</div>
+                  <div className="text-[10px] text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-blue-400 font-mono font-medium">
+                      {currentUser.role_nama || currentUser.role_kode}
+                    </span>
+                  </div>
                 </div>
               </button>
               <button

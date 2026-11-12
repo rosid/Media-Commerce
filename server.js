@@ -1520,11 +1520,44 @@ async function startServer() {
   function isInstallationLocked() {
     try {
       const st = db.prepare("SELECT nilai FROM settings WHERE kunci = 'app_installed'").get();
-      return st?.nilai === "true";
+      if (st?.nilai === "true") return true;
+      const sa = db.prepare("SELECT count(*) as c FROM users WHERE role_id = 1 AND aktif = 1").get();
+      if ((sa?.c || 0) > 0) {
+        try {
+          db.prepare("INSERT INTO settings (kunci, nilai) VALUES ('app_installed', 'true') ON CONFLICT(kunci) DO UPDATE SET nilai = 'true'").run();
+        } catch {
+        }
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
+  app.get("/api/client-info", (req, res) => {
+    const forwarded = req.headers["x-forwarded-for"]?.split(",")[0]?.trim();
+    const cfIp = req.headers["cf-connecting-ip"];
+    const realIp = req.headers["x-real-ip"];
+    let ip = cfIp || forwarded || realIp || req.socket.remoteAddress || req.ip || "127.0.0.1";
+    ip = ip.replace(/^::ffff:/, "");
+    const cfCity = req.headers["cf-ipcity"];
+    const cfCountry = req.headers["cf-ipcountry"];
+    const cfRegion = req.headers["cf-region"];
+    let location = "";
+    if (cfCity && cfCountry) {
+      location = `${cfCity}, ${cfCountry}`;
+    } else if (cfCountry) {
+      location = cfCountry === "ID" ? "Indonesia" : cfCountry;
+    } else if (cfRegion) {
+      location = `${cfRegion}, Indonesia`;
+    }
+    const installed = isInstallationLocked();
+    res.json({
+      ip,
+      location: location || (["127.0.0.1", "::1", "localhost"].includes(ip) ? "Lokal (Server Development)" : "Indonesia"),
+      installed
+    });
+  });
   app.get("/api/install/status", (_req, res) => {
     try {
       const dbExists = fs2.existsSync(dbPath);
@@ -3390,8 +3423,10 @@ async function startServer() {
   });
   app.post("/api/invoices/:id/payments", authenticateJWT, (req, res) => {
     const user = req.user;
-    const perm = getPermission(user.role_id, "payments");
-    if (!perm?.can_create) {
+    const permPay = getPermission(user.role_id, "payments");
+    const permInv = getPermission(user.role_id, "invoices");
+    const hasCreatePerm = permPay?.can_create || permInv?.can_create || user.role_id === 1 || ["super_admin", "admin", "finance", "direktur"].includes(user.role_kode);
+    if (!hasCreatePerm) {
       res.status(403).json({ error: "Hanya Finance atau Super Admin yang dapat mencatat pembayaran." });
       return;
     }
@@ -3462,21 +3497,21 @@ async function startServer() {
                inv.total_tagihan as total_tagihan_invoice,
                inv.total_dibayar as total_dibayar_invoice,
                inv.status as status_invoice,
-               inv.snapshot_nama_klien,
-               inv.snapshot_alamat,
-               inv.snapshot_npwp,
-               inv.snapshot_pic,
+               COALESCE(c.nama, d.snapshot_nama_klien, 'Klien') as snapshot_nama_klien,
+               COALESCE(c.alamat_tagih, q.snapshot_alamat, '') as snapshot_alamat,
+               COALESCE(c.npwp, q.snapshot_npwp, '') as snapshot_npwp,
+               COALESCE(q.snapshot_pic, '') as snapshot_pic,
                d.nama_kampanye,
                d.nomor as nomor_deal,
                q.nomor as nomor_quotation,
-               c.nama as nama_klien,
+               COALESCE(c.nama, d.snapshot_nama_klien, 'Klien') as nama_klien,
                u.nama as nama_pencatat,
                u.jabatan as jabatan_pencatat
         FROM payments py
         JOIN invoices inv ON inv.id = py.invoice_id
         LEFT JOIN deals d ON d.id = inv.deal_id
-        LEFT JOIN quotations q ON q.id = inv.quotation_id
-        LEFT JOIN clients c ON c.id = inv.client_id
+        LEFT JOIN clients c ON c.id = d.client_id
+        LEFT JOIN quotations q ON q.id = d.quotation_id
         LEFT JOIN users u ON u.id = py.dicatat_oleh
         ORDER BY py.tanggal_bayar DESC, py.id DESC
       `).all();
@@ -3484,17 +3519,20 @@ async function startServer() {
   });
   app.post("/api/receipts", authenticateJWT, (req, res) => {
     const user = req.user;
-    const perm = getPermission(user.role_id, "payments");
-    if (!perm?.can_create && user.role_id !== 1 && user.role_kode !== "super_admin") {
+    const permPay = getPermission(user.role_id, "payments");
+    const permInv = getPermission(user.role_id, "invoices");
+    const hasCreatePerm = permPay?.can_create || permInv?.can_create || user.role_id === 1 || ["super_admin", "admin", "finance", "direktur"].includes(user.role_kode);
+    if (!hasCreatePerm) {
       res.status(403).json({ error: "Tidak memiliki izin menerbitkan kwitansi / mencatat pembayaran." });
       return;
     }
     const { invoice_id, tanggal_bayar, jumlah, metode, referensi_bank, bukti_file, untuk_pembayaran, catatan } = req.body;
     const inv = db.prepare(`
-      SELECT inv.*, d.nama_kampanye, c.nama as nama_klien
+      SELECT inv.*, d.nama_kampanye, d.nomor as nomor_deal, d.snapshot_nama_klien,
+             c.nama as nama_klien, c.alamat_tagih as snapshot_alamat, c.npwp as snapshot_npwp
       FROM invoices inv
       LEFT JOIN deals d ON d.id = inv.deal_id
-      LEFT JOIN clients c ON c.id = inv.client_id
+      LEFT JOIN clients c ON c.id = d.client_id
       WHERE inv.id = ?
     `).get(Number(invoice_id));
     if (!inv) {

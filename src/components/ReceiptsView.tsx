@@ -73,9 +73,12 @@ export const ReceiptsModule: React.FC<ReceiptsModuleProps> = ({
 
   const canCreate =
     checkPerm(permissions, 'payments', 'create') ||
-    currentUser.role_id === 1 ||
-    currentUser.role_kode === 'super_admin' ||
-    currentUser.role_kode === 'finance';
+    checkPerm(permissions, 'invoices', 'create') ||
+    currentUser?.role_id === 1 ||
+    currentUser?.role_kode === 'super_admin' ||
+    currentUser?.role_kode === 'admin' ||
+    currentUser?.role_kode === 'finance' ||
+    currentUser?.role_kode === 'direktur';
 
   const loadReceipts = async () => {
     if (!apiGet) return;
@@ -163,6 +166,10 @@ export const ReceiptsModule: React.FC<ReceiptsModuleProps> = ({
       return sisa > 0 || inv.status !== 'Lunas';
     });
   }, [invoices]);
+
+  const availableInvoices = useMemo(() => {
+    return pendingInvoices.length > 0 ? pendingInvoices : invoices;
+  }, [pendingInvoices, invoices]);
 
   const handleSelectInvoice = (invId: number) => {
     setSelectedInvoiceId(invId);
@@ -597,19 +604,26 @@ Status       : LUNAS / DITERIMA`;
                   onChange={(e) => handleSelectInvoice(Number(e.target.value))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white cursor-pointer text-xs"
                 >
-                  <option value="">-- Pilih Invoice yang Akan Dibayar --</option>
-                  {pendingInvoices.map((inv) => {
+                  <option value="">-- Pilih Invoice yang Akan Dibayar ({availableInvoices.length} tersedia) --</option>
+                  {availableInvoices.map((inv) => {
                     const sisa = Math.max(0, Number(inv.total_tagihan || 0) - Number(inv.total_dibayar || 0));
                     return (
                       <option key={inv.id} value={inv.id}>
-                        {inv.nomor} — {inv.snapshot_nama_klien} (Total: {formatRupiah(inv.total_tagihan)} | Sisa: {formatRupiah(sisa)}) [{inv.status}]
+                        {inv.nomor} — {inv.snapshot_nama_klien || inv.nama_klien || 'Klien'} (Total: {formatRupiah(inv.total_tagihan)} | Sisa: {formatRupiah(sisa)}) [{inv.status}]
                       </option>
                     );
                   })}
                 </select>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Memilih invoice akan otomatis mengisi data klien dan sisa tagihan yang harus dibayar.
-                </p>
+                {invoices.length === 0 ? (
+                  <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-amber-800 text-[11px] flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>Belum ada data Invoice di sistem. Silakan terbitkan Invoice terlebih dahulu di menu <strong>Invoice & Pembayaran</strong>.</span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Memilih invoice akan otomatis mengisi data klien dan sisa tagihan yang harus dibayar.
+                  </p>
+                )}
               </div>
 
               {/* Tanggal & Jumlah Bayar */}
