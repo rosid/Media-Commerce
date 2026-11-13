@@ -195,6 +195,24 @@ export default function App() {
     [token]
   );
 
+  const parseApiResponse = async (res: Response) => {
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(
+        res.status === 404
+          ? 'Endpoint server belum aktif. Pastikan sudah menjalankan "npm run build" dan "pm2 restart" di server.'
+          : `Respons server tidak valid (HTTP ${res.status}). Pastikan server backend telah diperbarui.`
+      );
+    }
+    if (!res.ok) {
+      throw new Error(data.error || `Terjadi kesalahan pada permintaan server (HTTP ${res.status}).`);
+    }
+    return data;
+  };
+
   const apiPost = useCallback(
     async (url: string, body: any) => {
       const res = await fetch(url, {
@@ -205,11 +223,7 @@ export default function App() {
         },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Terjadi kesalahan pada permintaan server.');
-      }
-      return data;
+      return parseApiResponse(res);
     },
     [token]
   );
@@ -224,11 +238,7 @@ export default function App() {
         },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Terjadi kesalahan pada permintaan server.');
-      }
-      return data;
+      return parseApiResponse(res);
     },
     [token]
   );
@@ -243,11 +253,7 @@ export default function App() {
         },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Terjadi kesalahan pada permintaan server.');
-      }
-      return data;
+      return parseApiResponse(res);
     },
     [token]
   );
@@ -260,11 +266,7 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Terjadi kesalahan pada permintaan server.');
-      }
-      return data;
+      return parseApiResponse(res);
     },
     [token]
   );

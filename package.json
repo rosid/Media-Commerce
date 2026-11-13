@@ -10,7 +10,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node20 --outfile=server.js --packages=external",
     "start": "node server.js",
     "start:dev": "tsx server.ts",
-    "postinstall": "npm rebuild better-sqlite3",
+    "rebuild:sqlite": "npm rebuild better-sqlite3",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "reset:install": "node scripts/reset-install.js",
