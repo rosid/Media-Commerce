@@ -3742,9 +3742,50 @@ async function startServer() {
     });
   });
 
+  const ALLOWED_COMPANY_SETTINGS = new Set([
+    'nama_perusahaan',
+    'sub_judul_kop',
+    'alamat_perusahaan',
+    'npwp_perusahaan',
+    'telepon_perusahaan',
+    'email_perusahaan',
+    'website_perusahaan',
+    'bank_nama',
+    'bank_rekening',
+    'bank_atas_nama',
+    'catatan_kaki_pdf',
+    'logo_perusahaan',
+    'tampilkan_logo_kop',
+    'pdf_signatures_config',
+  ]);
+
+  const ALLOWED_WEB_SETTINGS = new Set([
+    'site_title',
+    'site_tagline',
+    'site_description',
+    'site_keywords',
+    'site_logo',
+    'site_favicon',
+    'seo_indexing',
+    'app_canonical_url',
+    'google_site_verification',
+    'turnstile_enabled',
+    'turnstile_site_key',
+    'turnstile_secret_key',
+    'turnstile_mode',
+    'security_session_timeout',
+    'security_max_login_attempts',
+    'security_force_https',
+    'security_password_min_length',
+    'maintenance_mode',
+    'maintenance_message',
+    'app_footer_text',
+    'app_timezone',
+  ]);
+
   app.put('/api/settings/company', authenticateJWT, (req: AuthRequest, res: Response) => {
     const user = req.user!;
-    if (user.role_kode !== 'super_admin' && user.role_kode !== 'admin') {
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'admin') {
       res.status(403).json({ error: 'Tidak memiliki akses mengubah pengaturan perusahaan.' });
       return;
     }
@@ -3753,7 +3794,9 @@ async function startServer() {
     const stmt = db.prepare('INSERT OR REPLACE INTO settings (kunci, nilai) VALUES (?, ?)');
     db.transaction(() => {
       for (const [k, v] of Object.entries(updates)) {
-        stmt.run(k, String(v));
+        if (ALLOWED_COMPANY_SETTINGS.has(k)) {
+          stmt.run(k, String(v ?? ''));
+        }
       }
     })();
 
@@ -3763,7 +3806,7 @@ async function startServer() {
 
   app.put('/api/settings/web', authenticateJWT, (req: AuthRequest, res: Response) => {
     const user = req.user!;
-    if (user.role_kode !== 'super_admin' && user.role_kode !== 'admin') {
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'admin') {
       res.status(403).json({ error: 'Tidak memiliki izin mengubah master pengaturan web.' });
       return;
     }
@@ -3772,7 +3815,9 @@ async function startServer() {
     const stmt = db.prepare('INSERT OR REPLACE INTO settings (kunci, nilai) VALUES (?, ?)');
     db.transaction(() => {
       for (const [k, v] of Object.entries(updates)) {
-        stmt.run(k, String(v ?? ''));
+        if (ALLOWED_WEB_SETTINGS.has(k)) {
+          stmt.run(k, String(v ?? ''));
+        }
       }
     })();
 
@@ -3783,7 +3828,10 @@ async function startServer() {
       null,
       `Memperbarui konfigurasi web aplikasi (Title: "${updates.site_title || '-'}", Indexing: ${updates.seo_indexing || '-'}, Turnstile: ${updates.turnstile_enabled || '-'}, Maintenance: ${updates.maintenance_mode || '-'})`,
       null,
-      updates
+      {
+        ...updates,
+        turnstile_secret_key: updates.turnstile_secret_key ? '***MASKED***' : '',
+      }
     );
 
     res.json({ success: true });
@@ -3791,8 +3839,8 @@ async function startServer() {
 
   app.get('/api/settings/system-stats', authenticateJWT, (req: AuthRequest, res: Response) => {
     const user = req.user!;
-    if (user.role_kode !== 'super_admin' && user.role_kode !== 'admin') {
-      res.status(403).json({ error: 'Tidak memiliki izin melihat statistik sistem VPS.' });
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang memiliki izin melihat statistik sistem VPS.' });
       return;
     }
 
@@ -3811,13 +3859,14 @@ async function startServer() {
     const totalInvoices = (db.prepare('SELECT COUNT(*) as c FROM invoices').get() as { c: number }).c;
     const totalAuditLogs = (db.prepare('SELECT COUNT(*) as c FROM audit_logs').get() as { c: number }).c;
     const mem = process.memoryUsage();
+    const majorNode = (process.versions?.node || '20').split('.')[0];
 
     res.json({
       platform: process.platform,
       arch: process.arch,
-      node_version: process.version,
+      node_version: `v${majorNode}.x LTS`,
       uptime_seconds: Math.floor(process.uptime()),
-      db_path: dbPath,
+      db_path: path.basename(dbPath),
       db_size_bytes: dbSize,
       db_size_mb: (dbSize / (1024 * 1024)).toFixed(2),
       memory_rss_mb: (mem.rss / (1024 * 1024)).toFixed(1),
@@ -3863,12 +3912,13 @@ async function startServer() {
     }
 
     const { file_base64, file_name } = req.body;
-    if (!file_base64) {
+    if (!file_base64 || typeof file_base64 !== 'string') {
       res.status(400).json({ error: 'Berkas database backup (.db) belum diunggah.' });
       return;
     }
 
     try {
+      const safeFileName = path.basename(String(file_name || 'mediaflow.db')).replace(/[^a-zA-Z0-9._-]/g, '_');
       const cleanBase64 = file_base64.replace(/^data:.*?;base64,/, '');
       const buffer = Buffer.from(cleanBase64, 'base64');
 
@@ -3883,8 +3933,8 @@ async function startServer() {
         user,
         'Pengaturan',
         'RESTORE_DATABASE',
-        file_name || 'mediaflow.db',
-        `Super Admin ${user.nama} memulihkan database SQLite dari berkas cadangan (${file_name || 'upload.db'}). Salinan pengaman dibuat di ${result.backupFile}`
+        safeFileName,
+        `Super Admin ${user.nama} memulihkan database SQLite dari berkas cadangan (${safeFileName}). Salinan pengaman dibuat di ${result.backupFile}`
       );
 
       res.json({
@@ -3894,7 +3944,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Error during database restore:', err);
-      res.status(500).json({ error: err.message || 'Gagal memulihkan database dari berkas backup.' });
+      res.status(400).json({ error: err.message || 'Gagal memulihkan database dari berkas backup.' });
     }
   });
 
@@ -3916,19 +3966,23 @@ async function startServer() {
   });
 
   // ============================================================================
-  // MARIADB / MYSQL ENGINE STATUS & TESTING
+  // MARIADB / MYSQL ENGINE STATUS & TESTING (Restricted to Super Admin)
   // ============================================================================
-  app.get('/api/database/status', (_req: Request, res: Response) => {
+  app.get('/api/database/status', authenticateJWT, (req: AuthRequest, res: Response) => {
+    const user = req.user!;
+    if (user.role_id !== 1 && user.role_kode !== 'super_admin' && user.role_kode !== 'superadmin') {
+      res.status(403).json({ error: 'Hanya Super Admin yang dapat melihat status konfigurasi database.' });
+      return;
+    }
+
     const configured = isMariaDBConfigured;
     const dbType = process.env.DB_TYPE || (configured ? 'mariadb' : 'sqlite');
     res.json({
       active_engine: configured ? 'mariadb' : 'sqlite',
       configured_engine: dbType,
       is_mariadb_configured: configured,
-      host: configured ? process.env.DB_HOST || '127.0.0.1' : undefined,
-      port: configured ? (process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306) : undefined,
-      database: configured ? process.env.DB_NAME : 'mediaflow.db',
-      user: configured ? process.env.DB_USER : undefined,
+      host: configured ? (process.env.DB_HOST ? 'Terkonfigurasi (.env)' : '127.0.0.1') : undefined,
+      database: configured ? 'MariaDB Production' : 'mediaflow.db',
       sqlite_fallback: !configured,
     });
   });
@@ -3940,20 +3994,14 @@ async function startServer() {
       return;
     }
 
-    const { host, port, user: dbUser, password, database } = req.body || {};
-    const result = await testMariaDBConnection({
-      host,
-      port: port ? Number(port) : undefined,
-      user: dbUser,
-      password,
-      database,
-    });
+    // Keamanan Anti-SSRF: Hanya menguji konfigurasi dari variabel lingkungan (.env) server, tidak menerima input host/port eksternal dari body
+    const result = await testMariaDBConnection();
 
     logAudit(
       user,
       'Pengaturan',
       'TEST_MARIADB_CONNECTION',
-      database || process.env.DB_NAME || 'mariadb',
+      'mariadb-env',
       `Super Admin ${user.nama} menguji koneksi MariaDB (${result.success ? 'BERHASIL' : 'GAGAL'}): ${result.message}`
     );
 

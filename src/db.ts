@@ -143,26 +143,52 @@ export const db: Database.Database = new Proxy({} as any, {
 });
 
 export function restoreDatabaseFromFile(buffer: Buffer): { success: boolean; backupFile: string; message: string } {
+  if (buffer.length > 50 * 1024 * 1024) {
+    throw new Error('Ukuran berkas database melebihi batas keamanan maksimal (50 MB).');
+  }
+
   const magic = buffer.subarray(0, 16).toString('utf-8');
   if (!magic.startsWith('SQLite format 3')) {
     throw new Error('File yang diunggah bukan file SQLite yang valid (header tidak cocok).');
   }
 
-  const tempPath = path.join(path.dirname(dbPath), `temp_restore_${Date.now()}.db`);
-  fs.writeFileSync(tempPath, buffer);
+  const tempPath = path.join(path.dirname(dbPath), `temp_restore_${Date.now()}_${ process.pid }.db`);
+  fs.writeFileSync(tempPath, buffer, { mode: 0o600 });
 
   try {
     const testDb = new Database(tempPath, { readonly: true });
-    const check = testDb.prepare("SELECT count(*) as c FROM sqlite_master WHERE type='table'").get() as any;
+    testDb.pragma('trusted_schema = OFF');
+
+    const integrity = testDb.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined;
+    if (!integrity || integrity.integrity_check !== 'ok') {
+      testDb.close();
+      throw new Error('Pemeriksaan integritas SQLite (PRAGMA integrity_check) gagal.');
+    }
+
+    const triggerCheck = testDb
+      .prepare("SELECT count(*) as c FROM sqlite_master WHERE type IN ('trigger', 'view')")
+      .get() as { c: number };
+    if (triggerCheck && triggerCheck.c > 0) {
+      testDb.close();
+      throw new Error('Berkas database ditolak karena mengandung trigger atau view eksternal yang tidak diizinkan.');
+    }
+
+    const requiredTables = ['users', 'roles', 'settings', 'quotations', 'deals', 'media_orders', 'invoices'];
+    const existingTables = (
+      testDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>
+    ).map((t) => t.name);
     testDb.close();
-    if (!check || check.c === 0) {
-      throw new Error('Database yang diunggah kosong atau tidak memiliki tabel yang valid.');
+
+    for (const reqTable of requiredTables) {
+      if (!existingTables.includes(reqTable)) {
+        throw new Error(`Skema database tidak sesuai standar MediaFlow ERP (tabel "${reqTable}" tidak ditemukan).`);
+      }
     }
   } catch (err: any) {
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     } catch {}
-    throw new Error(`File SQLite rusak atau tidak dapat dibaca: ${err.message}`);
+    throw new Error(`Validasi keamanan berkas SQLite gagal: ${err.message}`);
   }
 
   try {

@@ -1588,11 +1588,9 @@ export const SettingsModule: React.FC<{
     }
   }, [subTab]);
 
-  if (!settingsData) return null;
-
-  const { roleMatrix = [], users = [], sequences = [] } = settingsData;
-  const isSuperAdmin = currentUser.role_kode === 'super_admin' || currentUser.role_id === 1 || currentUser.role_kode === 'superadmin';
-  const canEditCompany = ['super_admin', 'admin'].includes(currentUser.role_kode) || currentUser.role_id === 1;
+  const { roleMatrix = [], users = [], sequences = [] } = settingsData || {};
+  const isSuperAdmin = currentUser?.role_kode === 'super_admin' || currentUser?.role_id === 1 || currentUser?.role_kode === 'superadmin';
+  const canEditCompany = ['super_admin', 'admin'].includes(currentUser?.role_kode) || currentUser?.role_id === 1;
   const activeRoleObj = roleMatrix.find((r: any) => r.id === selectedRoleId) || roleMatrix[0];
 
   const handleTogglePerm = async (
@@ -1978,11 +1976,14 @@ export const SettingsModule: React.FC<{
   const [mariaDBTestResult, setMariaDBTestResult] = useState<{ success: boolean; message: string; version?: string } | null>(null);
 
   useEffect(() => {
-    fetch('/api/database/status')
-      .then((res) => res.json())
-      .then((data) => setDbStatus(data))
-      .catch(() => {});
-  }, []);
+    if (subTab === 'system' && isSuperAdmin && apiGet) {
+      apiGet('/api/database/status')
+        .then((data) => {
+          if (data) setDbStatus(data);
+        })
+        .catch(() => {});
+    }
+  }, [subTab, isSuperAdmin]);
 
   const handleDownloadMariaDBSchema = async () => {
     setIsDownloadingMariaDBSchema(true);
@@ -2114,6 +2115,8 @@ export const SettingsModule: React.FC<{
     },
   ];
 
+  if (!settingsData) return null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
@@ -2191,15 +2194,17 @@ export const SettingsModule: React.FC<{
             <UserPlus className="w-3.5 h-3.5 text-slate-700" />
             Daftar Pengguna
           </button>
-          <button
-            onClick={() => setSubTab('system')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-              subTab === 'system' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Server className="w-3.5 h-3.5 text-rose-600" />
-            Server VPS & Database
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => setSubTab('system')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                subTab === 'system' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5 text-rose-600" />
+              Server VPS & Database
+            </button>
+          )}
         </div>
       </div>
 
@@ -4285,9 +4290,9 @@ export const SettingsModule: React.FC<{
       )}
 
       {/* ====================================================================
-          TAB G: SERVER VPS, MODE PEMELIHARAAN & MANAJEMEN DATABASE
+          TAB G: SERVER VPS, MODE PEMELIHARAAN & MANAJEMEN DATABASE (SUPER ADMIN ONLY)
          ==================================================================== */}
-      {subTab === 'system' && (
+      {subTab === 'system' && isSuperAdmin && (
         <div className="space-y-6 text-xs">
           {/* Top Bar Action */}
           <div className="bg-white border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -4640,7 +4645,7 @@ export const SettingsModule: React.FC<{
                   <div className="flex justify-between py-1.5 border-b border-slate-100">
                     <span className="text-slate-500">Runtime Node.js:</span>
                     <span className="font-semibold text-blue-700">
-                      {systemStats?.node_version || process.version || 'v20.x'}
+                      {systemStats?.node_version || 'v20.x LTS'}
                     </span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-100">
@@ -4670,8 +4675,8 @@ export const SettingsModule: React.FC<{
                     </span>
                   </div>
                   <div className="flex justify-between py-1.5">
-                    <span className="text-slate-500">Lokasi File DB:</span>
-                    <span className="font-semibold text-slate-800 text-[10px] truncate max-w-[200px]" title={systemStats?.db_path}>
+                    <span className="text-slate-500">Berkas Database Aktif:</span>
+                    <span className="font-semibold text-slate-800 text-[10px] truncate max-w-[200px]">
                       {systemStats?.db_path || 'mediaflow.db'}
                     </span>
                   </div>
